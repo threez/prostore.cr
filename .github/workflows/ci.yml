@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint & compile-check. Pure source-level checks; no database needed.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint & compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.20.1
+
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: lib
+          key: ${{ runner.os }}-shards-${{ hashFiles('shard.lock') }}
+          restore-keys: ${{ runner.os }}-shards-
+
+      - run: shards install
+
+      - name: Format check
+        run: crystal tool format --check
+
+      - name: Compile check
+        run: crystal build src/prostore.cr -o /tmp/prostore_check --no-codegen
+
+  # ---------------------------------------------------------------------------
+  # SQLite test job. Runs unit specs, SQLite-only integration specs, and
+  # the shared integration suite against in-memory SQLite. No service
+  # container needed.
+  # ---------------------------------------------------------------------------
+  test-sqlite:
+    name: Test (SQLite)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.20.1
+
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: lib
+          key: ${{ runner.os }}-shards-${{ hashFiles('shard.lock') }}
+          restore-keys: ${{ runner.os }}-shards-
+
+      - run: shards install
+
+      - name: Run specs (unit + SQLite integration + shared on SQLite)
+        run: crystal spec --order=random
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL test job. Runs the shared integration suite against a real
+  # Postgres service container. PROSTORE_TEST_PG_ONLY restricts the
+  # backend matrix to PG so this job exercises only the PG code paths
+  # (SQLite is fully covered by the test-sqlite job above).
+  # ---------------------------------------------------------------------------
+  test-postgres:
+    name: Test (PostgreSQL)
+    runs-on: ubuntu-latest
+    needs: lint
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: prostore
+          POSTGRES_PASSWORD: prostore
+          POSTGRES_DB: prostore_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_URL: postgres://prostore:prostore@localhost:5432/prostore_test
+      PROSTORE_TEST_PG_ONLY: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.20.1
+
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: lib
+          key: ${{ runner.os }}-shards-${{ hashFiles('shard.lock') }}
+          restore-keys: ${{ runner.os }}-shards-
+
+      - run: shards install
+
+      - name: Run specs (shared integration on PostgreSQL)
+        run: crystal spec spec/integration/shared --order=random

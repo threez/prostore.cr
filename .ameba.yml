@@ -1,0 +1,20 @@
+# Ameba configuration for prostore.
+
+Naming/BlockParameterName:
+  # Allow 2-char domain abbreviations: rs (ResultSet), fk (ForeignKey), na (NamedArg)
+  MinNameLength: 2
+
+Lint/NotNil:
+  # not_nil! is acceptable as a test assertion in specs
+  Excluded:
+    - "spec/**/*.cr"
+
+Lint/SpecFilename:
+  # Fixture files are intentionally-broken Crystal (not real specs)
+  Excluded:
+    - "spec/unit/compile_errors/fixtures/*.cr"
+
+Metrics/CyclomaticComplexity:
+  # Dispatch methods over complete step/operation type sets are inherently
+  # complex case statements and cannot be meaningfully simplified further.
+  MaxComplexity: 20

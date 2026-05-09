@@ -1,0 +1,45 @@
+#!/usr/bin/env crystal
+#
+# Operator CLI for prostore. Usage:
+#
+#   prostore migrate status
+#   prostore migrate abort <id>
+#   prostore drift check
+#
+# Requires DATABASE_URL environment variable. The hosting application must
+# require the model classes before invoking this script — typically via a
+# `require "./src/your_app"` entry that this script imports.
+
+require "../src/prostore"
+
+USAGE = <<-USAGE
+Usage:
+  prostore migrate status        Show migration history and outstanding drift
+  prostore migrate abort <id>    Mark an in-progress migration as aborted
+  prostore drift check           Dry-run drift detection
+USAGE
+
+url = ENV["DATABASE_URL"]?
+unless url
+  STDERR.puts "DATABASE_URL is not set"
+  exit 1
+end
+
+conn = Prostore::Connection.open(url)
+
+begin
+  case ARGV
+  when ["migrate", "status"]
+    Prostore::Migration::CLI.status(conn)
+  when ["migrate", "abort", _]
+    id = ARGV[2].to_i64? || (STDERR.puts("expected integer migration id"); exit 1)
+    Prostore::Migration::CLI.abort(conn, id)
+  when ["drift", "check"]
+    Prostore::Migration::CLI.drift_check(conn)
+  else
+    STDERR.puts USAGE
+    exit 1
+  end
+ensure
+  conn.close
+end
