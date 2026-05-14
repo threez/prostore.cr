@@ -102,9 +102,13 @@ module Prostore
         def backup(dest : String) : Nil
           uri = URI.parse(@url)
           args = ["-Fp", "-f", dest]
-          args += ["-h", uri.host.not_nil!] if uri.host
+          if host = uri.host
+            args += ["-h", host]
+          end
           args += ["-p", uri.port.to_s] if uri.port
-          args += ["-U", uri.user.not_nil!] if uri.user
+          if user = uri.user
+            args += ["-U", user]
+          end
           db_name = uri.path.lstrip('/')
           args << db_name unless db_name.empty?
           env = {"PGPASSWORD" => uri.password || ""}

@@ -31,7 +31,7 @@ module Prostore
       def self.bool_truthy?(val : String?) : Bool
         case val.to_s.downcase
         when "true", "yes", "1", "t", "on" then true
-        else                                     false
+        else                                    false
         end
       end
 

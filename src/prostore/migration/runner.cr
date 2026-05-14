@@ -223,7 +223,7 @@ module Prostore
       private def validate_sqlite_not_null!(steps : Array(Steps::Kind::Any)) : Nil
         return unless @conn.adapter.is_a?(Adapter::SQLite::Adapter)
 
-        referenced_by = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+        referenced_by = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
         @models.each do |model|
           model.prostore_schema.foreign_keys.each do |fk|
             referenced_by[fk.references_table] << model.prostore_table_name
@@ -233,7 +233,7 @@ module Prostore
         steps.each do |step|
           next unless step.is_a?(Steps::Kind::ApplyNotNull)
           refs = referenced_by[step.table_name]?
-          next unless refs && !refs.empty?
+          next if refs.nil? || refs.empty?
           raise Prostore::MigrationError.new(
             "Cannot apply NOT NULL to `#{step.table_name}.#{step.column_name}` on SQLite — " \
             "table is referenced by FK from: #{refs.sort.join(", ")}.\n" \

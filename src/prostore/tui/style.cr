@@ -48,14 +48,14 @@ module Prostore
       # without being garish.
       private def self.portable_type_fg(portable_type : String, s : String) : String
         code = case portable_type
-               when "int32", "int64"                then "96"  # bright cyan
-               when "float32", "float64", "decimal" then "93"  # bright yellow
-               when "bool"                          then "92"  # bright green
-               when "time"                          then "94"  # bright blue
-               when "bytes"                         then "95"  # bright magenta
-               when "uuid"                          then "96"  # bright cyan (IDs)
-               when "json"                          then "93"  # bright yellow
-               else                                      ""    # string, array_* → default
+               when "int32", "int64"                then "96" # bright cyan
+               when "float32", "float64", "decimal" then "93" # bright yellow
+               when "bool"                          then "92" # bright green
+               when "time"                          then "94" # bright blue
+               when "bytes"                         then "95" # bright magenta
+               when "uuid"                          then "96" # bright cyan (IDs)
+               when "json"                          then "93" # bright yellow
+               else                                      ""   # string, array_* → default
                end
         code.empty? ? s : "\e[#{code}m#{s}\e[0m"
       end
@@ -63,19 +63,19 @@ module Prostore
       private def self.type_fg(type_text : String, s : String) : String
         t = type_text.upcase
         code = if t.includes?("INT") || t.includes?("SERIAL")
-                 "96"  # bright cyan
+                 "96" # bright cyan
                elsif t.includes?("REAL") || t.includes?("FLOAT") ||
                      t.includes?("DOUBLE") || t.includes?("NUMERIC") ||
                      t.includes?("DECIMAL")
-                 "93"  # bright yellow
+                 "93" # bright yellow
                elsif t.includes?("BOOL")
-                 "92"  # bright green
+                 "92" # bright green
                elsif t.includes?("DATE") || t.includes?("TIME") || t.includes?("STAMP")
-                 "94"  # bright blue
+                 "94" # bright blue
                elsif t.includes?("BLOB") || t.includes?("BYTE") || t.includes?("BINARY")
-                 "95"  # bright magenta
+                 "95" # bright magenta
                else
-                 ""    # TEXT, VARCHAR, etc.
+                 "" # TEXT, VARCHAR, etc.
                end
         code.empty? ? s : "\e[#{code}m#{s}\e[0m"
       end

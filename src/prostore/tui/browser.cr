@@ -10,7 +10,7 @@ module Prostore
     # stringified). This sidesteps the PG vs SQLite DB::Any union mismatch and
     # is perfectly fine for a display/edit TUI.
     alias RowVal = String?
-    alias Row    = Array(RowVal)
+    alias Row = Array(RowVal)
 
     # A WHERE-fragment built from a search term applied across one or more
     # text columns: `col1 LIKE '%term%' OR col2 LIKE '%term%' OR …`.
@@ -46,7 +46,7 @@ module Prostore
                      filter : Filter? = nil) : Tuple(Array(String), Array(Row))
         qt = @conn.adapter.quote_ident(table)
         where_sql, args = build_filter_where(filter)
-        ph_limit  = @conn.adapter.placeholder(args.size + 1)
+        ph_limit = @conn.adapter.placeholder(args.size + 1)
         ph_offset = @conn.adapter.placeholder(args.size + 2)
         sql = "SELECT * FROM #{qt}#{where_sql} LIMIT #{ph_limit} OFFSET #{ph_offset}"
         all_args = args + [limit.as(::DB::Any), offset.as(::DB::Any)]
@@ -73,9 +73,9 @@ module Prostore
 
       # Fetch a single row by its primary key value.
       def fetch_row(table : String, pk_col : String, pk_val : String) : Hash(String, RowVal)?
-        qt  = @conn.adapter.quote_ident(table)
+        qt = @conn.adapter.quote_ident(table)
         qpk = @conn.adapter.quote_ident(pk_col)
-        ph  = @conn.adapter.placeholder(1)
+        ph = @conn.adapter.placeholder(1)
         sql = "SELECT * FROM #{qt} WHERE #{qpk} = #{ph} LIMIT 1"
         result = nil.as(Hash(String, RowVal)?)
 
@@ -84,9 +84,9 @@ module Prostore
             names = rs.column_names
             rs.each do
               row = {} of String => RowVal
-              names.each do |n|
+              names.each do |name|
                 v = rs.read
-                row[n] = v.nil? ? nil : v.to_s
+                row[name] = v.nil? ? nil : v.to_s
               end
               result = row
             end
@@ -100,28 +100,28 @@ module Prostore
       # wants the database default for should simply be omitted from `data`.
       def insert_row(table : String, data : Hash(String, String?)) : Nil
         return if data.empty?
-        qt   = @conn.adapter.quote_ident(table)
+        qt = @conn.adapter.quote_ident(table)
         cols = data.keys.map { |k| @conn.adapter.quote_ident(k) }.join(", ")
-        phs  = (1..data.size).map { |n| @conn.adapter.placeholder(n) }.join(", ")
-        sql  = "INSERT INTO #{qt} (#{cols}) VALUES (#{phs})"
+        phs = (1..data.size).map { |idx| @conn.adapter.placeholder(idx) }.join(", ")
+        sql = "INSERT INTO #{qt} (#{cols}) VALUES (#{phs})"
         @conn.exec(sql, args: data.values.map(&.as(::DB::Any)))
       end
 
       def update_cell(table : String, pk_col : String, pk_val : String,
                       column : String, value : String?) : Nil
-        qt   = @conn.adapter.quote_ident(table)
+        qt = @conn.adapter.quote_ident(table)
         qcol = @conn.adapter.quote_ident(column)
-        qpk  = @conn.adapter.quote_ident(pk_col)
-        ph1  = @conn.adapter.placeholder(1)
-        ph2  = @conn.adapter.placeholder(2)
-        sql  = "UPDATE #{qt} SET #{qcol} = #{ph1} WHERE #{qpk} = #{ph2}"
+        qpk = @conn.adapter.quote_ident(pk_col)
+        ph1 = @conn.adapter.placeholder(1)
+        ph2 = @conn.adapter.placeholder(2)
+        sql = "UPDATE #{qt} SET #{qcol} = #{ph1} WHERE #{qpk} = #{ph2}"
         @conn.exec(sql, args: [value.as(::DB::Any), pk_val.as(::DB::Any)])
       end
 
       def delete_row(table : String, pk_col : String, pk_val : String) : Nil
-        qt  = @conn.adapter.quote_ident(table)
+        qt = @conn.adapter.quote_ident(table)
         qpk = @conn.adapter.quote_ident(pk_col)
-        ph  = @conn.adapter.placeholder(1)
+        ph = @conn.adapter.placeholder(1)
         sql = "DELETE FROM #{qt} WHERE #{qpk} = #{ph}"
         @conn.exec(sql, args: [pk_val])
       end
@@ -139,7 +139,7 @@ module Prostore
       # back to SQL type_text inference).
       def portable_types(table : String) : Hash(String, String)
         result = {} of String => String
-        qt  = @conn.adapter.quote_ident(Migration::Bookkeeping::SCHEMA_TABLE)
+        qt = @conn.adapter.quote_ident(Migration::Bookkeeping::SCHEMA_TABLE)
         ph1 = @conn.adapter.placeholder(1)
         ph2 = @conn.adapter.placeholder(2)
         sql = "SELECT current_name, definition FROM #{qt} " \
@@ -167,7 +167,7 @@ module Prostore
         return empty unless filter
         return empty if filter.term.empty? || filter.columns.empty?
 
-        like    = @conn.adapter.like_operator
+        like = @conn.adapter.like_operator
         pattern = "%#{filter.term}%"
         clauses = filter.columns.map_with_index do |col, i|
           "#{@conn.adapter.quote_ident(col)} #{like} #{@conn.adapter.placeholder(i + 1)}"

@@ -63,7 +63,7 @@ module Prostore
       # Draw a horizontal separator spanning full width at y, merging with
       # a vertical line at `split_col` if provided.
       def hline(y : Int32, x : Int32, w : Int32, left_join : Bool = false, right_join : Bool = false) : Nil
-        left  = left_join  ? Term::LJ : Term::BL
+        left = left_join ? Term::LJ : Term::BL
         right = right_join ? Term::RJ : Term::BR
         at(y, x, "#{left}#{Term::HL * (w - 2)}#{right}")
       end

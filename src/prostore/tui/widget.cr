@@ -8,7 +8,7 @@ module Prostore
       property y : Int32
       property width : Int32
       property height : Int32
-      property focused : Bool
+      property? focused : Bool
 
       def initialize(@x : Int32, @y : Int32, @width : Int32, @height : Int32)
         @focused = false

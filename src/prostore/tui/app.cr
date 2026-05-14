@@ -33,17 +33,17 @@ module Prostore
 
       def initialize(@conn : Connection)
         @browser = Browser.new(@conn)
-        @screen  = Screen.new
+        @screen = Screen.new
         @running = true
-        @stack   = [NavTableList.new] of NavEntry
+        @stack = [NavTableList.new] of NavEntry
 
-        rows   = @screen.rows
-        cols   = @screen.cols
+        rows = @screen.rows
+        cols = @screen.cols
         grid_w = cols - TABLE_LIST_WIDTH
 
-        @table_list    = TableList.new(1, 1, TABLE_LIST_WIDTH, rows - 2, @browser)
-        @record_grid   = RecordGrid.new(TABLE_LIST_WIDTH + 1, 1, grid_w, rows - 2, @browser)
-        @fk_picker     = RecordGrid.new(1, 1, cols, rows - 2, @browser)
+        @table_list = TableList.new(1, 1, TABLE_LIST_WIDTH, rows - 2, @browser)
+        @record_grid = RecordGrid.new(TABLE_LIST_WIDTH + 1, 1, grid_w, rows - 2, @browser)
+        @fk_picker = RecordGrid.new(1, 1, cols, rows - 2, @browser)
         @record_detail = nil.as(RecordDetail?)
 
         wire_table_list
@@ -106,7 +106,7 @@ module Prostore
         when NavRecordDetail, NavNewRecord
           @record_detail.try &.render(@screen)
         else
-          @table_list.focused  = current.is_a?(NavTableList)
+          @table_list.focused = current.is_a?(NavTableList)
           @record_grid.focused = current.is_a?(NavRecordGrid)
           @table_list.render(@screen)
           render_divider
@@ -117,8 +117,8 @@ module Prostore
       end
 
       private def render_divider : Nil
-        (2..@screen.rows - 3).each do |r|
-          @screen.at(r, TABLE_LIST_WIDTH + 1, Term::VL)
+        (2..@screen.rows - 3).each do |row|
+          @screen.at(row, TABLE_LIST_WIDTH + 1, Term::VL)
         end
       end
 
@@ -128,9 +128,9 @@ module Prostore
         # read-only role and its own `status_hint` would describe the
         # mutation-friendly nav-mode bindings.
         hint = case current
-               when NavTableList                   then @table_list.status_hint
-               when NavRecordGrid                  then @record_grid.status_hint
-               when NavRecordDetail, NavNewRecord  then @record_detail.try(&.status_hint) || ""
+               when NavTableList                  then @table_list.status_hint
+               when NavRecordGrid                 then @record_grid.status_hint
+               when NavRecordDetail, NavNewRecord then @record_detail.try(&.status_hint) || ""
                when NavFKPicker
                  " ESC:cancel  ↑↓:row  ←→:cols  Enter:select  PgUp/Dn:page"
                else
@@ -148,44 +148,56 @@ module Prostore
         end
 
         case current
-        when NavFKPicker
-          if ev.key == Key::Esc
-            pop_fk_picker(nil)
-          elsif ev.key == Key::Enter
-            pop_fk_picker(@fk_picker.selected_pk)
-          elsif ev.key == Key::Char && (ev.char == 'd' || ev.char == 'n')
-            nil  # read-only picker — suppress mutations
-          else
-            @fk_picker.handle_key(ev)
+        when NavFKPicker                   then handle_fk_picker_key(ev)
+        when NavTableList                  then handle_table_list_key(ev)
+        when NavRecordGrid                 then handle_record_grid_key(ev)
+        when NavRecordDetail, NavNewRecord then handle_detail_key(ev)
+        end
+      end
+
+      private def handle_fk_picker_key(ev : KeyEvent) : Nil
+        if ev.key == Key::Esc
+          pop_fk_picker(nil)
+        elsif ev.key == Key::Enter
+          pop_fk_picker(@fk_picker.selected_pk)
+        elsif ev.key == Key::Char && (ev.char == 'd' || ev.char == 'n')
+          nil # read-only picker — suppress mutations
+        else
+          @fk_picker.handle_key(ev)
+        end
+      end
+
+      private def handle_table_list_key(ev : KeyEvent) : Nil
+        if ev.key == Key::Enter
+          table = @table_list.selected_table
+          if table
+            @record_grid.load_table(table) if @record_grid.table != table
+            push NavRecordGrid.new(table)
           end
-        when NavTableList
-          if ev.key == Key::Enter
-            table = @table_list.selected_table
-            if table
-              @record_grid.load_table(table) if @record_grid.table != table
-              push NavRecordGrid.new(table)
-            end
-          else
-            @table_list.handle_key(ev)
-          end
-        when NavRecordGrid
-          if ev.key == Key::Esc
-            # Delegate first — the grid consumes Esc while its search input
-            # is open so we don't accidentally pop back to the table list.
-            consumed = @record_grid.handle_key(ev)
-            pop unless consumed
-          else
-            @record_grid.handle_key(ev)
-          end
-        when NavRecordDetail, NavNewRecord
-          if ev.key == Key::Esc
-            # Delegate to detail first — if it's in edit mode, Esc cancels the
-            # edit and the detail stays open. Only pop when not editing.
-            consumed = @record_detail.try &.handle_key(ev)
-            pop unless consumed
-          else
-            @record_detail.try &.handle_key(ev)
-          end
+        else
+          @table_list.handle_key(ev)
+        end
+      end
+
+      private def handle_record_grid_key(ev : KeyEvent) : Nil
+        if ev.key == Key::Esc
+          # Delegate first — the grid consumes Esc while its search input
+          # is open so we don't accidentally pop back to the table list.
+          consumed = @record_grid.handle_key(ev)
+          pop unless consumed
+        else
+          @record_grid.handle_key(ev)
+        end
+      end
+
+      private def handle_detail_key(ev : KeyEvent) : Nil
+        if ev.key == Key::Esc
+          # Delegate to detail first — if it's in edit mode, Esc cancels the
+          # edit and the detail stays open. Only pop when not editing.
+          consumed = @record_detail.try &.handle_key(ev)
+          pop unless consumed
+        else
+          @record_detail.try &.handle_key(ev)
         end
       end
 
@@ -234,14 +246,14 @@ module Prostore
 
       private def build_detail(table : String, pk_col : String, pk_val : String) : RecordDetail
         ov = RecordDetail.new(1, 1, @screen.cols, @screen.rows - 2,
-                              @browser, table, pk_col, pk_val)
+          @browser, table, pk_col, pk_val)
         wire_detail(ov)
         ov
       end
 
       private def build_new_record(table : String) : RecordDetail
         ov = RecordDetail.for_new_record(1, 1, @screen.cols, @screen.rows - 2,
-                                          @browser, table)
+          @browser, table)
         wire_detail(ov)
         ov
       end

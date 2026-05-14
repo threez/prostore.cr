@@ -24,17 +24,16 @@ module Prostore
       end
 
       def render(screen : Screen) : Nil
-        title = focused ? Term.bold("Tables") : "Tables"
+        title = focused? ? Term.bold("Tables") : "Tables"
         screen.box(y, x, height, width, title)
 
-        visible = height - 2
         @tables.each_with_index do |name, i|
           next if i < @scroll
           row_y = y + 1 + (i - @scroll)
           break if row_y >= y + height - 1
 
           label = Term.fit(" #{i == @cursor ? "▸" : " "} #{name}", width - 2)
-          if i == @cursor && focused
+          if i == @cursor && focused?
             screen.at(row_y, x + 1, Term.reverse(label))
           elsif i == @cursor
             screen.at(row_y, x + 1, Term.bold(label))

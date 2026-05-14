@@ -7,32 +7,32 @@ require "../validation"
 module Prostore
   module TUI
     class RecordDetail < Widget
-      property on_close    : Proc(Nil)?
+      property on_close : Proc(Nil)?
       property on_follow_fk : Proc(String, String, Nil)?
-      property on_pick_fk   : Proc(String, String, Nil)?
+      property on_pick_fk : Proc(String, String, Nil)?
 
       def initialize(x : Int32, y : Int32, width : Int32, height : Int32,
                      @browser : Browser, @table : String, @pk_col : String?,
                      @pk_val : String)
         super(x, y, width, height)
-        @focused        = true
-        @row            = {} of String => RowVal
-        @schema         = @browser.schema(@table)
+        @focused = true
+        @row = {} of String => RowVal
+        @schema = @browser.schema(@table)
         @portable_types = @browser.portable_types(@table)
-        @cursor       = 0   # focused field index
-        @field_scroll = 0   # display-row offset for the field list
-        @editing      = false
-        @edit_lines   = [] of String
-        @edit_row     = 0   # cursor line within @edit_lines
-        @edit_col     = 0   # cursor column within current line
-        @bool_editing  = false
-        @bool_pending  = false
-        @field_errors  = {} of String => String
-        @dirty         = Set(String).new   # column names mutated since last load
-        @is_new        = false
-        @on_close      = nil
-        @on_follow_fk  = nil
-        @on_pick_fk    = nil
+        @cursor = 0       # focused field index
+        @field_scroll = 0 # display-row offset for the field list
+        @editing = false
+        @edit_lines = [] of String
+        @edit_row = 0 # cursor line within @edit_lines
+        @edit_col = 0 # cursor column within current line
+        @bool_editing = false
+        @bool_pending = false
+        @field_errors = {} of String => String
+        @dirty = Set(String).new # column names mutated since last load
+        @is_new = false
+        @on_close = nil
+        @on_follow_fk = nil
+        @on_pick_fk = nil
         reload
       end
 
@@ -45,7 +45,7 @@ module Prostore
 
       def set_new_mode : Nil
         @is_new = true
-        @row    = {} of String => RowVal
+        @row = {} of String => RowVal
         @field_errors.clear
         @dirty.clear
       end
@@ -69,11 +69,11 @@ module Prostore
         title = @is_new ? "New · #{@table}" : "#{@table} · #{pk_display}"
         screen.box(y, x, height, width, title)
 
-        inner_w  = width - 2
-        max_name = @schema.columns.map(&.name.size).max? || 8
-        label_w  = [max_name + 4, inner_w // 3].min
-        val_w    = compute_val_w
-        available = height - 2  # -2 borders (hint now lives in the App's status bar)
+        inner_w = width - 2
+        max_name = @schema.columns.max_of?(&.name.size) || 8
+        label_w = [max_name + 4, inner_w // 3].min
+        val_w = compute_val_w
+        available = height - 2 # -2 borders (hint now lives in the App's status bar)
 
         row_offsets = compute_row_offsets
         ensure_cursor_visible(row_offsets, available)
@@ -88,21 +88,21 @@ module Prostore
 
             dirty = @dirty.includes?(col.name)
             if li == 0
-              pointer  = if fi == @cursor
-                             "▸"
-                           elsif @field_errors.has_key?(col.name)
-                             Style.error("!")
-                           else
-                             " "
-                           end
+              pointer = if fi == @cursor
+                          "▸"
+                        elsif @field_errors.has_key?(col.name)
+                          Style.error("!")
+                        else
+                          " "
+                        end
               raw_label = Term.fit("#{pointer} #{col.name}", label_w)
-              label     = dirty ? Term.bold(raw_label) : raw_label
-              pk_tag    = col.primary ? Term.dim(" [pk]") : ""
-              fk_hint   = fk_for_col(col.name)
-              fk_label  = fk_hint ? Style.fk_ref("  → #{fk_hint.references_table}") : ""
+              label = dirty ? Term.bold(raw_label) : raw_label
+              pk_tag = col.primary ? Term.dim(" [pk]") : ""
+              fk_hint = fk_for_col(col.name)
+              fk_label = fk_hint ? Style.fk_ref("  → #{fk_hint.references_table}") : ""
             else
-              label    = " " * label_w
-              pk_tag   = ""
+              label = " " * label_w
+              pk_tag = ""
               fk_label = ""
             end
 
@@ -112,7 +112,7 @@ module Prostore
             if fi == @cursor && !@editing && !@bool_editing
               # Strip inner ANSI before applying reverse — otherwise the first
               # `\e[0m` from a colour segment cancels the reverse video mid-row.
-              plain  = Term.fit(Term.strip_ansi(line), inner_w)
+              plain = Term.fit(Term.strip_ansi(line), inner_w)
               styled = dirty ? Term.bold(Term.reverse(plain)) : Term.reverse(plain)
               screen.at(screen_row, x + 1, styled)
             else
@@ -120,7 +120,6 @@ module Prostore
             end
           end
         end
-
       end
 
       def handle_key(ev : KeyEvent) : Bool
@@ -168,7 +167,7 @@ module Prostore
         case ev.key
         when Key::Esc
           commit_edit
-          true  # consumed — app will not pop the stack
+          true # consumed — app will not pop the stack
         when Key::Enter
           insert_newline
           true
@@ -210,7 +209,7 @@ module Prostore
           true
         when Key::Tab
           col = current_col
-          fk  = col ? fk_for_col(col.name) : nil
+          fk = col ? fk_for_col(col.name) : nil
           if fk && col && fk.columns.size == 1
             cancel_edit
             @on_pick_fk.try &.call(fk.references_table, col.name)
@@ -238,7 +237,7 @@ module Prostore
           true
         when Key::Tab
           col = current_col
-          fk  = col ? fk_for_col(col.name) : nil
+          fk = col ? fk_for_col(col.name) : nil
           if fk && col && fk.columns.size == 1
             @on_pick_fk.try &.call(fk.references_table, col.name)
             true
@@ -287,7 +286,7 @@ module Prostore
           @edit_lines << "" if @edit_lines.empty?
           @edit_row = @edit_lines.size - 1
           @edit_col = @edit_lines[@edit_row].size
-          @editing  = true
+          @editing = true
         end
       end
 
@@ -331,8 +330,8 @@ module Prostore
       end
 
       private def insert_newline : Nil
-        line  = @edit_lines[@edit_row]
-        left  = line[0...@edit_col]
+        line = @edit_lines[@edit_row]
+        left = line[0...@edit_col]
         right = line[@edit_col..]? || ""
         @edit_lines[@edit_row] = left
         @edit_lines.insert(@edit_row + 1, right)
@@ -400,7 +399,7 @@ module Prostore
         col = @schema.columns[@cursor]?
         return unless col
         c_start = row_offsets[@cursor]
-        c_end   = c_start + field_row_count(col, @cursor) - 1
+        c_end = c_start + field_row_count(col, @cursor) - 1
         if c_start < @field_scroll
           @field_scroll = c_start
         elsif c_end >= @field_scroll + available
@@ -420,7 +419,7 @@ module Prostore
           [count, 1].max
         else
           val = @row[col.name]?
-          val.nil? ? 1 : [val.split('\n').sum { |l| soft_wrap(l, vw).size }, 1].max
+          val.nil? ? 1 : [val.split('\n').sum { |ln| soft_wrap(ln, vw).size }, 1].max
         end
       end
 
@@ -429,19 +428,19 @@ module Prostore
       private def field_lines(col : Adapter::LiveColumn, fi : Int32) : Array(String)
         if @bool_editing && fi == @cursor
           yes_part = @bool_pending ? "◉ yes" : "○ yes"
-          no_part  = @bool_pending ? "○ no"  : "◉ no"
+          no_part = @bool_pending ? "○ no" : "◉ no"
           ["#{yes_part}   #{no_part}"]
         elsif @editing && fi == @cursor
           vw = compute_val_w
           result = [] of String
           @edit_lines.each_with_index do |text, li|
             full = if li == @edit_row
-                      left  = text[0...@edit_col]
-                      right = text[@edit_col..]? || ""
-                      "#{left}█#{right}"
-                    else
-                      text
-                    end
+                     left = text[0...@edit_col]
+                     right = text[@edit_col..]? || ""
+                     "#{left}█#{right}"
+                   else
+                     text
+                   end
             segs = soft_wrap(full, vw)
             segs.each_with_index do |seg, si|
               result << (si < segs.size - 1 ? seg + Style.wrap_cont : seg)
@@ -453,13 +452,13 @@ module Prostore
           if val.nil?
             [Term.dim("(null)")]
           else
-            vw        = compute_val_w
-            pt        = @portable_types[col.name]?
+            vw = compute_val_w
+            pt = @portable_types[col.name]?
             has_error = @field_errors.has_key?(col.name)
-            display   = ColumnTypes.bool?(pt, col.type_text) ? ColumnTypes.bool_display(val) : val
-            result    = [] of String
-            display.split('\n').each do |l|
-              segs = soft_wrap(l, vw)
+            display = ColumnTypes.bool?(pt, col.type_text) ? ColumnTypes.bool_display(val) : val
+            result = [] of String
+            display.split('\n').each do |ln|
+              segs = soft_wrap(ln, vw)
               segs.each_with_index do |seg, si|
                 colored = has_error ? Style.error(seg) : Style.value(pt, col.type_text, seg)
                 result << (si < segs.size - 1 ? colored + Style.wrap_cont : colored)
@@ -474,9 +473,9 @@ module Prostore
       # bindings reachable from the current state are listed here so the user
       # doesn't have to look in two places.
       def status_hint : String
-        err     = !@bool_editing && !@editing ? current_col.try { |c| @field_errors[c.name]? } : nil
+        err = !@bool_editing && !@editing ? current_col.try { |col| @field_errors[col.name]? } : nil
         cur_col = current_col
-        cur_fk  = cur_col.try { |c| fk_for_col(c.name) }
+        cur_fk = cur_col.try { |col| fk_for_col(col.name) }
         rm_part = (cur_col && cur_col.nullable && !(cur_col.primary && !@is_new)) ? "  r:remove" : ""
         if @bool_editing
           " ←→/Space:toggle  Enter/Esc:done"
@@ -490,7 +489,7 @@ module Prostore
           " ↑↓:field  e:edit#{rm_part}#{tab_part}  s:insert  Esc:back"
         else
           fk_follow = cur_fk ? "  f:follow-fk" : ""
-          fk_tab    = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
+          fk_tab = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
           " ↑↓:field  e:edit#{rm_part}#{fk_follow}#{fk_tab}  s:save  d:delete  Esc:back"
         end
       end
@@ -553,7 +552,7 @@ module Prostore
       end
 
       private def fk_for_col(col_name : String) : Adapter::LiveForeignKey?
-        @schema.foreign_keys.find { |fk| fk.columns.includes?(col_name) }
+        @schema.foreign_keys.find(&.columns.includes?(col_name))
       end
 
       private def pk_display : String
@@ -563,9 +562,9 @@ module Prostore
       end
 
       private def compute_val_w : Int32
-        inner_w  = width - 2
-        max_name = @schema.columns.map(&.name.size).max? || 8
-        label_w  = [max_name + 4, inner_w // 3].min
+        inner_w = width - 2
+        max_name = @schema.columns.max_of?(&.name.size) || 8
+        label_w = [max_name + 4, inner_w // 3].min
         [inner_w - label_w - 1, 4].max
       end
 
@@ -584,7 +583,6 @@ module Prostore
         segs << text[pos..]
         segs
       end
-
     end
   end
 end

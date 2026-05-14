@@ -6,7 +6,7 @@ require "../column_types"
 module Prostore
   module TUI
     class RecordGrid < Widget
-      PAGE_SIZE    =  50
+      PAGE_SIZE     = 50
       MIN_COL_WIDTH =  8
 
       getter table : String?
@@ -17,16 +17,16 @@ module Prostore
         super(x, y, width, height)
         @table = nil
         @col_names = [] of String
-        @col_types       = {} of String => String  # SQL type_text fallback
-        @portable_types  = {} of String => String
-        @fk_refs         = {} of String => String  # col_name → referenced table
-        @searchable_cols = [] of String            # text-like columns for LIKE search
+        @col_types = {} of String => String # SQL type_text fallback
+        @portable_types = {} of String => String
+        @fk_refs = {} of String => String # col_name → referenced table
+        @searchable_cols = [] of String   # text-like columns for LIKE search
         @rows = [] of Row
         @total = 0_i64
         @page = 0
         @cursor = 0
         @col_offset = 0
-        @filter_term   = ""
+        @filter_term = ""
         @search_active = false
         @on_open_detail = nil
         @on_new_row = nil
@@ -41,18 +41,18 @@ module Prostore
         @page = 0
         @cursor = 0
         @col_offset = 0
-        @filter_term   = ""
+        @filter_term = ""
         @search_active = false
         schema = @browser.schema(table)
-        @col_types = schema.columns.each_with_object({} of String => String) do |c, h|
-          h[c.name] = c.type_text
+        @col_types = schema.columns.each_with_object({} of String => String) do |col, acc|
+          acc[col.name] = col.type_text
         end
-        @fk_refs = schema.foreign_keys.each_with_object({} of String => String) do |fk, h|
-          fk.columns.each { |c| h[c] = fk.references_table }
+        @fk_refs = schema.foreign_keys.each_with_object({} of String => String) do |fk, acc|
+          fk.columns.each { |col_name| acc[col_name] = fk.references_table }
         end
         @portable_types = @browser.portable_types(table)
-        @searchable_cols = schema.columns.select { |c|
-          ColumnTypes.searchable_text?(@portable_types[c.name]?, c.type_text)
+        @searchable_cols = schema.columns.select { |col|
+          ColumnTypes.searchable_text?(@portable_types[col.name]?, col.type_text)
         }.map(&.name)
         reload
       end
@@ -78,16 +78,16 @@ module Prostore
         from, to_col, col_widths = visible_col_range(inner_w)
         n = @col_names.size
 
-        scroll_info  = n > (to_col - from + 1) ? "  col #{from + 1}-#{to_col + 1}/#{n}" : ""
-        search_part  = if @search_active
-                          "  /#{@filter_term}█"
-                        elsif !@filter_term.empty?
-                          "  /#{@filter_term}"
-                        else
-                          ""
-                        end
+        scroll_info = n > (to_col - from + 1) ? "  col #{from + 1}-#{to_col + 1}/#{n}" : ""
+        search_part = if @search_active
+                        "  /#{@filter_term}█"
+                      elsif !@filter_term.empty?
+                        "  /#{@filter_term}"
+                      else
+                        ""
+                      end
         title_str = "#{t}  pg #{@page + 1}/#{total_pages}  #{@total} rows#{scroll_info}#{search_part}"
-        title = focused ? Term.bold(title_str) : title_str
+        title = focused? ? Term.bold(title_str) : title_str
         screen.box(y, x, height, width, title)
 
         return if @col_names.empty?
@@ -95,9 +95,9 @@ module Prostore
         vis_names = @col_names[from..to_col]
 
         # Header
-        header = build_row_str(vis_names.map { |n|
-          ref = @fk_refs[n]?
-          ref ? "#{Term.bold(n)} #{Style.fk_ref("→#{ref}")}" : Term.bold(n)
+        header = build_row_str(vis_names.map { |name|
+          ref = @fk_refs[name]?
+          ref ? "#{Term.bold(name)} #{Style.fk_ref("→#{ref}")}" : Term.bold(name)
         }, col_widths)
         screen.at(y + 1, x + 1, Term.fit(header, inner_w))
 
@@ -110,8 +110,8 @@ module Prostore
               Term.dim("(null)")
             else
               col_name = vis_names[ci]
-              pt       = @portable_types[col_name]?
-              tt       = @col_types[col_name]? || ""
+              pt = @portable_types[col_name]?
+              tt = @col_types[col_name]? || ""
               if ColumnTypes.bool?(pt, tt)
                 Style.bool_badge(v)
               elsif @fk_refs[col_name]?
@@ -122,7 +122,7 @@ module Prostore
             end
           end
           line = Term.fit(build_row_str(vis_cells, col_widths), inner_w)
-          if i == @cursor && focused
+          if i == @cursor && focused?
             screen.at(row_y, x + 1, Term.reverse(Term.strip_ansi(line)))
           elsif i == @cursor
             screen.at(row_y, x + 1, Term.bold(Term.strip_ansi(line)))
@@ -230,15 +230,15 @@ module Prostore
         # How many columns fit at the minimum width (each col + one │ separator)?
         max_visible = [(inner_w + 1) // (MIN_COL_WIDTH + 1), 1].max
 
-        from   = @col_offset.clamp(0, [n - max_visible, 0].max)
+        from = @col_offset.clamp(0, [n - max_visible, 0].max)
         to_col = [from + max_visible - 1, n - 1].min
-        count  = to_col - from + 1
+        count = to_col - from + 1
 
         # Distribute available width evenly, honouring the minimum
-        seps   = count - 1
-        per    = [(inner_w - seps) // count, MIN_COL_WIDTH].max
+        seps = count - 1
+        per = [(inner_w - seps) // count, MIN_COL_WIDTH].max
         widths = Array(Int32).new(count, per)
-        used   = widths.sum(0) + seps
+        used = widths.sum(0) + seps
         widths[-1] += [inner_w - used, 0].max
 
         {from, to_col, widths}
