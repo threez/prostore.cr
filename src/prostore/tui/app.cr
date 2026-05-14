@@ -75,15 +75,14 @@ module Prostore
         hint = if @overlay
                  " ESC:back  ↑↓:field  e:edit  f:follow-fk  s:save  d:delete"
                elsif @focus == 0
-                 " Tab:→grid  ↑↓:table  q:quit"
+                 " ↑↓:table  Enter:open  q:quit"
                else
-                 " Tab:←tables  ↑↓:row  Enter:detail  PgUp/Dn:page  n:new  d:delete  q:quit"
+                 " ESC:←tables  ↑↓:row  Enter:detail  PgUp/Dn:page  n:new  d:delete  q:quit"
                end
         @screen.status_bar(@screen.rows - 1, hint)
       end
 
       private def handle_key(ev : KeyEvent) : Nil
-        # Global quit
         if ev.key == Key::CtrlC || (ev.key == Key::Char && ev.char == 'q' && @overlay.nil?)
           @running = false
           return
@@ -94,19 +93,31 @@ module Prostore
           return
         end
 
-        # Tab switches focus
-        if ev.key == Key::Tab || ev.key == Key::ShiftTab
-          @focus = (@focus + 1) % 2
-          @table_list.focused  = (@focus == 0)
-          @record_grid.focused = (@focus == 1)
-          return
-        end
-
         if @focus == 0
-          @table_list.handle_key(ev)
+          if ev.key == Key::Enter
+            focus_grid
+          else
+            @table_list.handle_key(ev)
+          end
         else
-          @record_grid.handle_key(ev)
+          if ev.key == Key::Esc
+            focus_table_list
+          else
+            @record_grid.handle_key(ev)
+          end
         end
+      end
+
+      private def focus_grid : Nil
+        @focus = 1
+        @table_list.focused  = false
+        @record_grid.focused = true
+      end
+
+      private def focus_table_list : Nil
+        @focus = 0
+        @table_list.focused  = true
+        @record_grid.focused = false
       end
 
       private def wire_callbacks : Nil
