@@ -67,6 +67,29 @@ module Prostore
         "\e[#{code}m#{s}#{RESET}"
       end
 
+      # Colorize a value string based on its SQL column type_text.
+      # Uses bright (pastel-on-dark-terminal) variants so different types
+      # are distinguishable without being garish.
+      def self.type_fg(type_text : String, s : String) : String
+        t = type_text.upcase
+        code = if t.includes?("INT") || t.includes?("SERIAL")
+                 "96"  # bright cyan   — integers
+               elsif t.includes?("REAL") || t.includes?("FLOAT") ||
+                     t.includes?("DOUBLE") || t.includes?("NUMERIC") ||
+                     t.includes?("DECIMAL")
+                 "93"  # bright yellow — floats / decimals
+               elsif t.includes?("BOOL")
+                 "92"  # bright green  — booleans
+               elsif t.includes?("DATE") || t.includes?("TIME") || t.includes?("STAMP")
+                 "94"  # bright blue   — dates / timestamps
+               elsif t.includes?("BLOB") || t.includes?("BYTE") || t.includes?("BINARY")
+                 "95"  # bright magenta — binary / blobs
+               else
+                 ""    # no colour     — TEXT, VARCHAR, etc.
+               end
+        code.empty? ? s : "\e[#{code}m#{s}#{RESET}"
+      end
+
       # Visible (printable) length — excludes ANSI escape sequences.
       def self.visible_size(s : String) : Int32
         s.gsub(/\e\[[0-9;]*m/, "").chars.size

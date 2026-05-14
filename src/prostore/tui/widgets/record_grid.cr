@@ -15,6 +15,7 @@ module Prostore
         super(x, y, width, height)
         @table = nil
         @col_names = [] of String
+        @col_types = {} of String => String
         @rows = [] of Row
         @total = 0_i64
         @page = 0
@@ -29,6 +30,10 @@ module Prostore
         @page = 0
         @cursor = 0
         @col_offset = 0
+        schema = @browser.schema(table)
+        @col_types = schema.columns.each_with_object({} of String => String) do |c, h|
+          h[c.name] = c.type_text
+        end
         reload
       end
 
@@ -64,7 +69,14 @@ module Prostore
         @rows.each_with_index do |row, i|
           row_y = y + 2 + i
           break if row_y >= y + height - 1
-          vis_cells = row[from..to_col].map { |v| v.nil? ? Term.dim("(null)") : v }
+          vis_cells = row[from..to_col].map_with_index do |v, ci|
+            if v.nil?
+              Term.dim("(null)")
+            else
+              type_text = @col_types[vis_names[ci]]? || ""
+              Term.type_fg(type_text, v)
+            end
+          end
           line = Term.fit(build_row_str(vis_cells, col_widths), inner_w)
           if i == @cursor && focused
             screen.at(row_y, x + 1, Term.reverse(line))

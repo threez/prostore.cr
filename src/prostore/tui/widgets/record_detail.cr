@@ -59,7 +59,7 @@ module Prostore
           val_str = if @editing && i == @cursor
                       "#{@edit_buf}█"
                     else
-                      format_val(@row[col.name]?)
+                      format_val(@row[col.name]?, col.type_text)
                     end
 
           fk_hint  = fk_for_col(col.name)
@@ -214,8 +214,9 @@ module Prostore
         "#{pk}=#{val || "?"}"
       end
 
-      private def format_val(v : RowVal) : String
-        v.nil? ? Term.dim("(null)") : v
+      private def format_val(v : RowVal, type_text : String = "") : String
+        return Term.dim("(null)") if v.nil?
+        Term.type_fg(type_text, v)
       end
 
       # Count visible characters (strips ANSI escape sequences).
