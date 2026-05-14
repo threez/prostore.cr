@@ -127,9 +127,6 @@ module Prostore
         when Key::Down
           @cursor = [@cursor + 1, @schema.columns.size - 1].min
           true
-        when Key::Esc
-          @on_close.try &.call
-          true
         when Key::Char
           case ev.char
           when 'e'

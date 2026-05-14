@@ -9,6 +9,15 @@ require "./widgets/record_detail"
 
 module Prostore
   module TUI
+    # Each entry on the navigation stack captures enough data to rebuild the
+    # view when popping back to it.
+    private record NavTableList
+    private record NavRecordGrid, table : String
+    private record NavRecordDetail, table : String, pk_col : String, pk_val : String
+    private record NavNewRecord, table : String
+
+    private alias NavEntry = NavTableList | NavRecordGrid | NavRecordDetail | NavNewRecord
+
     class App
       TABLE_LIST_WIDTH = 44
 
@@ -17,20 +26,21 @@ module Prostore
       end
 
       def initialize(@conn : Connection)
-        @browser  = Browser.new(@conn)
-        @screen   = Screen.new
-        @running  = true
-        @focus    = 0  # 0 = table list, 1 = record grid
-        @overlay  = nil.as(RecordDetail?)
+        @browser = Browser.new(@conn)
+        @screen  = Screen.new
+        @running = true
+        @stack   = [NavTableList.new] of NavEntry
 
-        rows = @screen.rows
-        cols = @screen.cols
+        rows   = @screen.rows
+        cols   = @screen.cols
         grid_w = cols - TABLE_LIST_WIDTH
 
-        @table_list  = TableList.new(1, 1, TABLE_LIST_WIDTH, rows - 2, @browser)
-        @record_grid = RecordGrid.new(TABLE_LIST_WIDTH + 1, 1, grid_w, rows - 2, @browser)
+        @table_list    = TableList.new(1, 1, TABLE_LIST_WIDTH, rows - 2, @browser)
+        @record_grid   = RecordGrid.new(TABLE_LIST_WIDTH + 1, 1, grid_w, rows - 2, @browser)
+        @record_detail = nil.as(RecordDetail?)
 
-        wire_callbacks
+        wire_table_list
+        wire_record_grid
         @table_list.focused = true
         @table_list.reload
       end
@@ -51,10 +61,41 @@ module Prostore
         end
       end
 
-      private def render : Nil
-        if ov = @overlay
-          ov.render(@screen)
+      private def current : NavEntry
+        @stack.last
+      end
+
+      private def push(entry : NavEntry) : Nil
+        @stack << entry
+        sync_detail
+      end
+
+      # Pop one entry. After popping, rebuild the detail widget if the new top
+      # is itself a detail entry (so Esc through a chain of FK-follows works).
+      private def pop(reload_grid : Bool = false) : Nil
+        @stack.pop if @stack.size > 1
+        @record_grid.reload if reload_grid
+        sync_detail
+      end
+
+      private def sync_detail : Nil
+        case nav = current
+        when NavRecordDetail
+          @record_detail = build_detail(nav.table, nav.pk_col, nav.pk_val)
+        when NavNewRecord
+          @record_detail = build_new_record(nav.table)
         else
+          @record_detail = nil
+        end
+      end
+
+      private def render : Nil
+        case current
+        when NavRecordDetail, NavNewRecord
+          @record_detail.try &.render(@screen)
+        else
+          @table_list.focused  = current.is_a?(NavTableList)
+          @record_grid.focused = current.is_a?(NavRecordGrid)
           @table_list.render(@screen)
           render_divider
           @record_grid.render(@screen)
@@ -64,111 +105,110 @@ module Prostore
       end
 
       private def render_divider : Nil
-        rows = @screen.rows
-        # Vertical line between the two panes
-        (2..rows - 3).each do |r|
+        (2..@screen.rows - 3).each do |r|
           @screen.at(r, TABLE_LIST_WIDTH + 1, Term::VL)
         end
       end
 
       private def render_status_bar : Nil
-        hint = if @overlay
-                 " ESC:back  ↑↓:field  e:edit  f:follow-fk  s:save  d:delete"
-               elsif @focus == 0
+        hint = case current
+               when NavTableList
                  " ↑↓:table  Enter:open  q:quit"
+               when NavRecordGrid
+                 " ESC:back  ↑↓:row  ←→:cols  Enter:detail  PgUp/Dn:page  n:new  d:delete  q:quit"
+               when NavRecordDetail, NavNewRecord
+                 " ESC:back  ↑↓:field  e:edit  s:save  d:delete"
                else
-                 " ESC:←tables  ↑↓:row  ←→:cols  Enter:detail  PgUp/Dn:page  n:new  d:delete  q:quit"
+                 ""
                end
         @screen.status_bar(@screen.rows - 1, hint)
       end
 
       private def handle_key(ev : KeyEvent) : Nil
-        if ev.key == Key::CtrlC || (ev.key == Key::Char && ev.char == 'q' && @overlay.nil?)
+        in_detail = current.is_a?(NavRecordDetail) || current.is_a?(NavNewRecord)
+
+        if ev.key == Key::CtrlC || (ev.key == Key::Char && ev.char == 'q' && !in_detail)
           @running = false
           return
         end
 
-        if ov = @overlay
-          ov.handle_key(ev)
-          return
-        end
-
-        if @focus == 0
+        case current
+        when NavTableList
           if ev.key == Key::Enter
-            focus_grid
+            table = @table_list.selected_table
+            if table
+              @record_grid.load_table(table) if @record_grid.table != table
+              push NavRecordGrid.new(table)
+            end
           else
             @table_list.handle_key(ev)
           end
-        else
+        when NavRecordGrid
           if ev.key == Key::Esc
-            focus_table_list
+            pop
           else
             @record_grid.handle_key(ev)
+          end
+        when NavRecordDetail, NavNewRecord
+          if ev.key == Key::Esc
+            # Delegate to detail first — if it's in edit mode, Esc cancels the
+            # edit and the detail stays open. Only pop when not editing.
+            consumed = @record_detail.try &.handle_key(ev)
+            pop unless consumed
+          else
+            @record_detail.try &.handle_key(ev)
           end
         end
       end
 
-      private def focus_grid : Nil
-        @focus = 1
-        @table_list.focused  = false
-        @record_grid.focused = true
-      end
-
-      private def focus_table_list : Nil
-        @focus = 0
-        @table_list.focused  = true
-        @record_grid.focused = false
-      end
-
-      private def wire_callbacks : Nil
+      private def wire_table_list : Nil
         @table_list.on_select = ->(t : String) {
-          @record_grid.load_table(t)
+          @record_grid.load_table(t) if @record_grid.table != t
           nil
         }
+      end
 
+      private def wire_record_grid : Nil
         @record_grid.on_open_detail = ->(t : String, pk_val : String) {
           pk = @browser.pk_col(t)
-          return nil unless pk
-          open_detail(t, pk, pk_val)
+          if pk
+            push NavRecordDetail.new(t, pk, pk_val)
+          end
           nil
         }
 
         @record_grid.on_new_row = ->(t : String) {
-          open_new_record(t)
+          push NavNewRecord.new(t)
           nil
         }
       end
 
-      private def open_detail(table : String, pk_col : String, pk_val : String) : Nil
-        rows = @screen.rows
-        cols = @screen.cols
-        ov = RecordDetail.new(1, 1, cols, rows - 2, @browser, table, pk_col, pk_val)
-        wire_detail(ov, table)
-        @overlay = ov
+      private def build_detail(table : String, pk_col : String, pk_val : String) : RecordDetail
+        ov = RecordDetail.new(1, 1, @screen.cols, @screen.rows - 2,
+                              @browser, table, pk_col, pk_val)
+        wire_detail(ov)
+        ov
       end
 
-      private def open_new_record(table : String) : Nil
-        rows = @screen.rows
-        cols = @screen.cols
-        ov = RecordDetail.for_new_record(1, 1, cols, rows - 2, @browser, table)
-        wire_detail(ov, table)
-        @overlay = ov
+      private def build_new_record(table : String) : RecordDetail
+        ov = RecordDetail.for_new_record(1, 1, @screen.cols, @screen.rows - 2,
+                                          @browser, table)
+        wire_detail(ov)
+        ov
       end
 
-      private def wire_detail(ov : RecordDetail, table : String) : Nil
+      private def wire_detail(ov : RecordDetail) : Nil
+        # Called after a successful insert or delete — pop and refresh the grid.
         ov.on_close = -> {
-          @overlay = nil
-          @record_grid.reload
+          pop(reload_grid: true)
           nil
         }
 
+        # Follow an FK: push a new detail onto the stack without closing this one.
         ov.on_follow_fk = ->(ref_table : String, ref_val : String) {
-          @overlay = nil
-          @table_list.reload
           ref_pk = @browser.pk_col(ref_table)
           if ref_pk
-            @record_grid.load_table(ref_table)
-            open_detail(ref_table, ref_pk, ref_val)
+            push NavRecordDetail.new(ref_table, ref_pk, ref_val)
           end
           nil
         }
