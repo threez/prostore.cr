@@ -77,7 +77,7 @@ module Prostore
                elsif @focus == 0
                  " ↑↓:table  Enter:open  q:quit"
                else
-                 " ESC:←tables  ↑↓:row  Enter:detail  PgUp/Dn:page  n:new  d:delete  q:quit"
+                 " ESC:←tables  ↑↓:row  ←→:cols  Enter:detail  PgUp/Dn:page  n:new  d:delete  q:quit"
                end
         @screen.status_bar(@screen.rows - 1, hint)
       end
