@@ -861,6 +861,34 @@ Prostore.setup("sqlite3://app.db?journal_mode=wal&synchronous=normal")
 Note: `sqlite3::memory:` does not support WAL mode; the pragma is silently
 ignored by SQLite in that case.
 
+### SQLite in production (concurrent access)
+
+SQLite's default journal mode (`delete`) serializes all access — readers and
+the writer block each other, and connections fail immediately with
+`SQLITE_BUSY` when another connection holds a lock (`busy_timeout` defaults
+to 0). For any production workload with concurrent readers alongside a writer,
+enable **WAL mode** and set a non-zero **busy_timeout**:
+
+```crystal
+Prostore.setup("sqlite3://app.db?journal_mode=wal&synchronous=normal&busy_timeout=5000")
+```
+
+| Setting | Why |
+|---------|-----|
+| `journal_mode=wal` | Readers never block the writer; the writer never blocks readers |
+| `synchronous=normal` | Safe with WAL (checkpoints are still fsync'd); faster than `full` |
+| `busy_timeout=5000` | Writer retries for up to 5 s on lock contention instead of failing immediately |
+
+Increase `max_pool_size` (via URL) to allow Crystal fibers to hold multiple
+concurrent reader connections:
+
+```crystal
+Prostore.setup("sqlite3://app.db?journal_mode=wal&synchronous=normal&busy_timeout=5000&max_pool_size=10")
+```
+
+There is no separate read-replica configuration — all connections share the
+same pool and adapter. WAL is the mechanism that makes concurrent reads safe.
+
 ### In-memory SQLite
 
 `sqlite3::memory:` creates a fresh database per `DB.open` call. To use an
