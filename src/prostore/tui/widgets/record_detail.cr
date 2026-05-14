@@ -49,7 +49,8 @@ module Prostore
         screen.box(y, x, height, width, title)
 
         inner_w = width - 2
-        label_w = [@schema.columns.map(&.name.size).max? || 8, 20].min + 2
+        max_name = @schema.columns.map(&.name.size).max? || 8
+        label_w  = [max_name + 4, inner_w // 3].min
 
         @schema.columns.each_with_index do |col, i|
           row_y = y + 1 + i
