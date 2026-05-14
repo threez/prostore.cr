@@ -411,6 +411,17 @@ class Prostore::Model
                 named_keys << na.name.id.stringify
               end
             end
+            # For `where(Q.lt(:field, val))` etc., extract the field symbol from
+            # comparison predicate args so the analyzer reports index coverage.
+            if current.name.id.stringify == "where"
+              current.args.each do |arg|
+                if arg.is_a?(Call) && ["lt", "gt", "lte", "gte", "ne", "in", "like"].includes?(arg.name.id.stringify)
+                  if arg.args.size > 0 && arg.args[0].is_a?(SymbolLiteral)
+                    named_keys << arg.args[0].id.stringify
+                  end
+                end
+              end
+            end
             # Capture positional `SymbolLiteral` args so the analyzer can
             # recognize `order_by(:score, desc: true)` as a sort over
             # `:score` without requiring the named-arg form.

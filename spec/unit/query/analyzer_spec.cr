@@ -69,6 +69,26 @@ private class QaOrderByPositionalCovered < Prostore::Model
   query :top, -> { order_by(:score, desc: true) }
 end
 
+# Comparison predicates (Q.lt / Q.gt etc.) in named query bodies.
+private class QaPredicateCovered < Prostore::Model
+  field 1, :id, Int64, primary: true, auto_increment: true
+  field 2, :created_at, Time
+  field 3, :score, Int32
+
+  index 1, [:created_at]
+  index 2, [:score]
+
+  query :before, ->(t : Time) { where(Q.lt(:created_at, t)).order_by(:created_at, desc: true) }
+  query :above_score, ->(s : Int32) { where(Q.gt(:score, s)) }
+end
+
+private class QaPredicateMissing < Prostore::Model
+  field 1, :id, Int64, primary: true, auto_increment: true
+  field 2, :created_at, Time
+
+  query :before, ->(t : Time) { where(Q.lt(:created_at, t)) }
+end
+
 describe Prostore::Query::Analyzer do
   it "classifies fields filtered in named queries" do
     report = Prostore::Query::Analyzer.analyze(QaIndexed.prostore_schema)
@@ -116,6 +136,28 @@ describe Prostore::Query::Analyzer do
     it "rejects a query that filters only by a non-leading column of a composite index" do
       expect_raises(Prostore::SchemaError, /by_status.*status/m) do
         Prostore::Query::Analyzer.validate_indexes!(QaCompositeMiss.prostore_schema)
+      end
+    end
+  end
+
+  describe "comparison predicate operators in named queries (Q.lt / Q.gt etc.)" do
+    it "classifies field from Q.lt predicate as filtered" do
+      report = Prostore::Query::Analyzer.analyze(QaPredicateCovered.prostore_schema)
+      report.all_filtered.should contain("created_at")
+    end
+
+    it "classifies field from Q.gt predicate as filtered" do
+      report = Prostore::Query::Analyzer.analyze(QaPredicateCovered.prostore_schema)
+      report.all_filtered.should contain("score")
+    end
+
+    it "passes required-index check when predicate field has an index" do
+      Prostore::Query::Analyzer.validate_indexes!(QaPredicateCovered.prostore_schema)
+    end
+
+    it "raises strict missing-index error when predicate field lacks an index" do
+      expect_raises(Prostore::SchemaError, /before.*created_at/m) do
+        Prostore::Query::Analyzer.validate_indexes!(QaPredicateMissing.prostore_schema)
       end
     end
   end
