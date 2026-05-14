@@ -44,8 +44,9 @@ module Prostore
         top_fill = if title.empty?
                      Term::HL * inner_w
                    else
-                     t = Term.trunc(" #{title} ", inner_w)
-                     t + Term::HL * [inner_w - t.chars.size, 0].max
+                     t = " #{title} "
+                     pad = [inner_w - visible_len(t), 0].max
+                     t + Term::HL * pad
                    end
         at(y, x, "#{Term::TL}#{top_fill}#{Term::TR}")
 
@@ -71,6 +72,10 @@ module Prostore
       def status_bar(row : Int32, text : String) : Nil
         fitted = Term.fit(text, @cols)
         at(row, 1, Term.reverse(fitted))
+      end
+
+      private def visible_len(s : String) : Int32
+        s.gsub(/\e\[[0-9;]*m/, "").chars.size
       end
     end
   end

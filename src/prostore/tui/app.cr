@@ -10,7 +10,7 @@ require "./widgets/record_detail"
 module Prostore
   module TUI
     class App
-      TABLE_LIST_WIDTH = 22
+      TABLE_LIST_WIDTH = 44
 
       def self.run(conn : Connection) : Nil
         new(conn).run
