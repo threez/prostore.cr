@@ -67,9 +67,6 @@ module Prostore
           end
         end
 
-        # Hint at bottom
-        hint = " PgUp/PgDn:page  n:new  d:delete  Enter:detail"
-        screen.at(y + height - 1, x + 1, Term.fit(Term.dim(hint), inner_w))
       end
 
       def handle_key(ev : KeyEvent) : Bool
