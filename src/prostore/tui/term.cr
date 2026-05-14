@@ -67,6 +67,33 @@ module Prostore
         "\e[#{code}m#{s}#{RESET}"
       end
 
+      # Colorize a value string by prostore portable type tag (preferred).
+      # Portable types come from the prostore_schema table and are precise:
+      # e.g. "bool" stays green even on SQLite where the SQL type is INTEGER.
+      def self.portable_type_fg(portable_type : String, s : String) : String
+        code = case portable_type
+               when "int32", "int64"          then "96"  # bright cyan
+               when "float32", "float64",
+                    "decimal"                 then "93"  # bright yellow
+               when "bool"                    then "92"  # bright green
+               when "time"                    then "94"  # bright blue
+               when "bytes"                   then "95"  # bright magenta
+               when "uuid"                    then "96"  # bright cyan (IDs)
+               when "json"                    then "93"  # bright yellow
+               else                                ""    # string, array_* → default
+               end
+        code.empty? ? s : "\e[#{code}m#{s}#{RESET}"
+      end
+
+      # Colorize using portable_type if available, otherwise infer from SQL type_text.
+      def self.value_color(portable_type : String?, type_text : String, s : String) : String
+        if pt = portable_type
+          portable_type_fg(pt, s)
+        else
+          type_fg(type_text, s)
+        end
+      end
+
       # Colorize a value string based on its SQL column type_text.
       # Uses bright (pastel-on-dark-terminal) variants so different types
       # are distinguishable without being garish.

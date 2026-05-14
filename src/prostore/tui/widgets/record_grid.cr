@@ -15,7 +15,8 @@ module Prostore
         super(x, y, width, height)
         @table = nil
         @col_names = [] of String
-        @col_types = {} of String => String
+        @col_types    = {} of String => String  # SQL type_text fallback
+        @portable_types = {} of String => String
         @rows = [] of Row
         @total = 0_i64
         @page = 0
@@ -34,6 +35,7 @@ module Prostore
         @col_types = schema.columns.each_with_object({} of String => String) do |c, h|
           h[c.name] = c.type_text
         end
+        @portable_types = @browser.portable_types(table)
         reload
       end
 
@@ -73,8 +75,8 @@ module Prostore
             if v.nil?
               Term.dim("(null)")
             else
-              type_text = @col_types[vis_names[ci]]? || ""
-              Term.type_fg(type_text, v)
+              col_name  = vis_names[ci]
+              Term.value_color(@portable_types[col_name]?, @col_types[col_name]? || "", v)
             end
           end
           line = Term.fit(build_row_str(vis_cells, col_widths), inner_w)

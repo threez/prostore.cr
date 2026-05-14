@@ -1,6 +1,8 @@
 require "db"
+require "json"
 require "../connection"
 require "../adapter/live_state"
+require "../migration/bookkeeping"
 
 module Prostore
   module TUI
@@ -112,6 +114,32 @@ module Prostore
         live = schema(table)
         pk = live.columns.find(&.primary)
         pk ? pk.name : nil
+      end
+
+      # Returns prostore portable type tags keyed by column name, read from the
+      # prostore_schema bookkeeping table. Returns an empty hash if the table
+      # doesn't exist (database not managed by prostore — caller should fall
+      # back to SQL type_text inference).
+      def portable_types(table : String) : Hash(String, String)
+        result = {} of String => String
+        qt  = @conn.adapter.quote_ident(Migration::Bookkeeping::SCHEMA_TABLE)
+        ph1 = @conn.adapter.placeholder(1)
+        ph2 = @conn.adapter.placeholder(2)
+        sql = "SELECT current_name, definition FROM #{qt} " \
+              "WHERE table_name = #{ph1} AND kind = #{ph2}"
+        @conn.with_connection do |db_conn|
+          db_conn.query_each(sql, table, Drift::SchemaTable::KIND_COLUMN) do |rs|
+            name = rs.read(String)
+            defn = rs.read(String)
+            parsed = JSON.parse(defn)
+            if pt = parsed["portable_type"]?.try(&.as_s?)
+              result[name] = pt
+            end
+          end
+        end
+        result
+      rescue
+        {} of String => String
       end
     end
   end

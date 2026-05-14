@@ -11,9 +11,10 @@ module Prostore
                      @browser : Browser, @table : String, @pk_col : String?,
                      @pk_val : String)
         super(x, y, width, height)
-        @focused      = true
-        @row          = {} of String => RowVal
-        @schema       = @browser.schema(@table)
+        @focused        = true
+        @row            = {} of String => RowVal
+        @schema         = @browser.schema(@table)
+        @portable_types = @browser.portable_types(@table)
         @cursor       = 0   # focused field index
         @field_scroll = 0   # display-row offset for the field list
         @editing      = false
@@ -313,7 +314,7 @@ module Prostore
           if val.nil?
             [Term.dim("(null)")]
           else
-            val.split('\n').map { |l| Term.type_fg(col.type_text, l) }
+            val.split('\n').map { |l| Term.value_color(@portable_types[col.name]?, col.type_text, l) }
           end
         end
       end
