@@ -35,6 +35,7 @@ private class SpecLiteralDefaults < Prostore::Model
   field 2, :active, Bool, default: false, backfill: false
   field 3, :count, Int32, default: 0, backfill: 0
   field 4, :label, String, default: "none", backfill: "none"
+  field 5, :created_at, Time, default: :CURRENT_TIMESTAMP
 end
 
 describe "Prostore::Model schema introspection" do
@@ -111,6 +112,11 @@ describe "Prostore::Model schema introspection" do
       f = SpecLiteralDefaults.prostore_schema.field(:label).not_nil!
       f.default_sql.should eq("'none'")
       f.backfill_sql.should eq("'none'")
+    end
+
+    it "emits SymbolLiteral verbatim as SQL keyword/function" do
+      f = SpecLiteralDefaults.prostore_schema.field(:created_at).not_nil!
+      f.default_sql.should eq("CURRENT_TIMESTAMP")
     end
   end
 end

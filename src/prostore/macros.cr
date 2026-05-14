@@ -104,7 +104,9 @@ class Prostore::Model
       end
 
       # Scalar literals (Bool, Number, String) are auto-wrapped in their SQL
-      # equivalents. SQL.expr("...") and Crystal lambdas are also accepted.
+      # equivalents. Symbol literals are emitted verbatim as SQL keywords /
+      # function calls (:CURRENT_TIMESTAMP → CURRENT_TIMESTAMP).
+      # SQL.expr("...") and Crystal lambdas are also accepted.
       default_sql = nil
       if has_default
         if opts[:default].is_a?(BoolLiteral)
@@ -113,6 +115,8 @@ class Prostore::Model
           default_sql = opts[:default].id.stringify
         elsif opts[:default].is_a?(StringLiteral)
           default_sql = "'" + opts[:default].id.stringify.gsub(/'/, "''") + "'"
+        elsif opts[:default].is_a?(SymbolLiteral)
+          default_sql = opts[:default].id.stringify
         elsif opts[:default].is_a?(Call) && opts[:default].name.id.stringify == "expr"
           default_sql = opts[:default].args[0].is_a?(StringLiteral) ? opts[:default].args[0] : nil
           if default_sql.nil?
@@ -120,7 +124,8 @@ class Prostore::Model
           end
         elsif !opts[:default].is_a?(ProcLiteral)
           raise "field #{name} on #{@type.name}: default: accepts SQL.expr(...), a Crystal lambda, " \
-                "or a scalar literal (Bool, Int, String). Got #{opts[:default].class_name}."
+                "a scalar literal (Bool, Int, String), or a symbol for SQL keywords/functions. " \
+                "Got #{opts[:default].class_name}."
         end
       end
 
@@ -132,6 +137,8 @@ class Prostore::Model
           backfill_sql = opts[:backfill].id.stringify
         elsif opts[:backfill].is_a?(StringLiteral)
           backfill_sql = "'" + opts[:backfill].id.stringify.gsub(/'/, "''") + "'"
+        elsif opts[:backfill].is_a?(SymbolLiteral)
+          backfill_sql = opts[:backfill].id.stringify
         elsif opts[:backfill].is_a?(Call) && opts[:backfill].name.id.stringify == "expr"
           backfill_sql = opts[:backfill].args[0].is_a?(StringLiteral) ? opts[:backfill].args[0] : nil
           if backfill_sql.nil?
@@ -139,7 +146,8 @@ class Prostore::Model
           end
         elsif !opts[:backfill].is_a?(ProcLiteral)
           raise "field #{name} on #{@type.name}: backfill: accepts SQL.expr(...), a Crystal lambda, " \
-                "or a scalar literal (Bool, Int, String). Got #{opts[:backfill].class_name}."
+                "a scalar literal (Bool, Int, String), or a symbol for SQL keywords/functions. " \
+                "Got #{opts[:backfill].class_name}."
         end
       end
 
