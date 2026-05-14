@@ -861,6 +861,34 @@ Prostore.setup("sqlite3://app.db?journal_mode=wal&synchronous=normal")
 Note: `sqlite3::memory:` does not support WAL mode; the pragma is silently
 ignored by SQLite in that case.
 
+### SQLite in production (concurrent access)
+
+SQLite's default journal mode (`delete`) serializes all access — readers and
+the writer block each other, and connections fail immediately with
+`SQLITE_BUSY` when another connection holds a lock (`busy_timeout` defaults
+to 0). For any production workload with concurrent readers alongside a writer,
+enable **WAL mode** and set a non-zero **busy_timeout**:
+
+```crystal
+Prostore.setup("sqlite3://app.db?journal_mode=wal&synchronous=normal&busy_timeout=5000")
+```
+
+| Setting | Why |
+|---------|-----|
+| `journal_mode=wal` | Readers never block the writer; the writer never blocks readers |
+| `synchronous=normal` | Safe with WAL (checkpoints are still fsync'd); faster than `full` |
+| `busy_timeout=5000` | Writer retries for up to 5 s on lock contention instead of failing immediately |
+
+Increase `max_pool_size` (via URL) to allow Crystal fibers to hold multiple
+concurrent reader connections:
+
+```crystal
+Prostore.setup("sqlite3://app.db?journal_mode=wal&synchronous=normal&busy_timeout=5000&max_pool_size=10")
+```
+
+There is no separate read-replica configuration — all connections share the
+same pool and adapter. WAL is the mechanism that makes concurrent reads safe.
+
 ### In-memory SQLite
 
 `sqlite3::memory:` creates a fresh database per `DB.open` call. To use an
@@ -872,6 +900,57 @@ url = "sqlite3::memory:?max_pool_size=1&initial_pool_size=1&max_idle_pool_size=1
 conn = Prostore.setup(url, [User, Post] of Prostore::Model.class)
 # conn is now both migrated and set as default_connection
 ```
+
+---
+
+## Backup
+
+`Prostore::Backup.run` writes a point-in-time backup of the database to a
+destination path. The destination may contain strftime tokens (`%Y %m %d
+%H %M %S`), which are expanded to the current UTC time — so a single
+`cron` line produces naturally-rotated, timestamped files:
+
+```crystal
+path = Prostore::Backup.run(conn, "/var/backups/app_%Y%m%d_%H%M%S.db")
+# => "/var/backups/app_20260514_103045.db"
+```
+
+Or via the operator CLI:
+
+```sh
+bin/prostore backup /var/backups/app_%Y%m%d_%H%M%S.db
+# Backup written to /var/backups/app_20260514_103045.db
+```
+
+### SQLite
+
+Uses [`VACUUM INTO`](https://www.sqlite.org/lang_vacuum.html) — an online,
+non-blocking backup that works under WAL mode and produces a defragmented
+copy. Requires SQLite 3.27.0 or later (released 2019).
+
+### PostgreSQL
+
+Shells out to `pg_dump` (plain-text format). `pg_dump` must be available in
+`PATH`. Connection parameters (host, port, user, database) are derived from
+`DATABASE_URL`; the password is passed via `PGPASSWORD`.
+
+### Cron examples
+
+```sh
+# SQLite — hourly backup (one file per hour, 24 kept by filename convention)
+0 * * * * DATABASE_URL=sqlite3:///var/app/app.db \
+  /path/to/bin/prostore backup /var/backups/app_%Y%m%d_%H.db
+
+# SQLite — every 6 hours
+0 */6 * * * DATABASE_URL=sqlite3:///var/app/app.db \
+  /path/to/bin/prostore backup /var/backups/app_%Y%m%d_%H.db
+
+# PostgreSQL — daily dump at 03:00
+0 3 * * * DATABASE_URL=postgres://user:pass@localhost/mydb \
+  /path/to/bin/prostore backup /var/backups/mydb_%Y%m%d.sql
+```
+
+Use OS-level tools (`find -mtime`, `logrotate`) to prune old backups.
 
 ---
 

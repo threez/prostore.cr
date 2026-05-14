@@ -101,6 +101,10 @@ module Prostore
       def placeholders(count : Int32) : String
         (1..count).map { |name| placeholder(name) }.join(", ")
       end
+
+      # Write a point-in-time backup to `dest` (an absolute file path).
+      # SQLite uses `VACUUM INTO`; PostgreSQL shells out to `pg_dump`.
+      abstract def backup(dest : String) : Nil
     end
   end
 end

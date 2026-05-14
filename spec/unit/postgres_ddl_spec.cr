@@ -44,7 +44,7 @@ describe "PostgreSQL DDL emission" do
 
   it "exposes correct capability flags" do
     db = DB.open("sqlite3::memory:") # any DB to construct the adapter
-    adapter = Prostore::Adapter::Postgres::Adapter.new(db)
+    adapter = Prostore::Adapter::Postgres::Adapter.new(db, "postgres://localhost/test")
     adapter.supports_alter_set_not_null?.should be_true
     adapter.supports_add_constraint_not_valid?.should be_true
     adapter.supports_alter_drop_column?.should be_true

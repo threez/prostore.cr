@@ -72,6 +72,10 @@ module Prostore
           "?"
         end
 
+        def backup(dest : String) : Nil
+          @db.exec("VACUUM INTO '#{dest.gsub("'", "''")}'")
+        end
+
         private def build_pk_lookup_for(definition : Schema::Definition) : Hash(String, Array(String))
           h = {} of String => Array(String)
           if pk = definition.primary_key
