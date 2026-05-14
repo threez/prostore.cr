@@ -159,6 +159,7 @@ module Prostore
         operations = drift_report.ops + model_ops
 
         steps = Steps::Planner.plan(operations)
+        validate_sqlite_not_null!(steps)
 
         migration_id = State.insert_migration(@conn.adapter, db_conn, source_hash, target_hash)
         State.insert_steps(@conn.adapter, db_conn, migration_id, steps)
@@ -213,6 +214,34 @@ module Prostore
           end
         ensure
           heartbeat.stop
+        end
+      end
+
+      # Raises a clear error when an ApplyNotNull step would trigger a SQLite
+      # table rebuild on a table referenced by FK — that rebuild fails with
+      # foreign_keys=ON. Called before persisting the step list.
+      private def validate_sqlite_not_null!(steps : Array(Steps::Kind::Any)) : Nil
+        return unless @conn.adapter.is_a?(Adapter::SQLite::Adapter)
+
+        referenced_by = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+        @models.each do |model|
+          model.prostore_schema.foreign_keys.each do |fk|
+            referenced_by[fk.references_table] << model.prostore_table_name
+          end
+        end
+
+        steps.each do |step|
+          next unless step.is_a?(Steps::Kind::ApplyNotNull)
+          refs = referenced_by[step.table_name]?
+          next unless refs && !refs.empty?
+          raise Prostore::MigrationError.new(
+            "Cannot apply NOT NULL to `#{step.table_name}.#{step.column_name}` on SQLite — " \
+            "table is referenced by FK from: #{refs.sort.join(", ")}.\n" \
+            "SQLite requires a table rebuild for ApplyNotNull, which fails with foreign_keys=ON.\n" \
+            "Fix: declare the field nullable (T?) and normalize nil reads at call sites, " \
+            "or use the same SQL.expr for both default: and backfill: to take the " \
+            "single-step ADD COLUMN path instead."
+          )
         end
       end
 
