@@ -63,7 +63,9 @@ module Prostore
       # Order new tables so a table is created after every table its foreign
       # keys reference. Edges are restricted to the new-models set: FKs that
       # reference an already-existing table need no ordering constraint.
-      private def topological_sort(new_models : Array(Prostore::Model.class)) : Array(Prostore::Model.class)
+      #
+      # Also used by `Prostore.delete_all` (reversed) to derive safe DELETE order.
+      def topological_sort(new_models : Array(Prostore::Model.class)) : Array(Prostore::Model.class)
         new_names = new_models.map(&.prostore_table_name).to_set
         by_name = new_models.to_h { |model| {model.prostore_table_name, model} }
 

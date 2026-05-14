@@ -67,4 +67,22 @@ module Prostore
     @@default_connection = conn
     conn
   end
+
+  # Delete all rows from `models` in reverse FK dependency order (children
+  # before parents). Safe for test teardown when foreign_keys=ON.
+  def self.delete_all(models : Array(Prostore::Model.class) = Prostore.models,
+                      conn : Connection = Prostore.default_connection) : Nil
+    sorted = Diff::Engine.topological_sort(models)
+    conn.with_connection do |db_conn|
+      sorted.reverse_each do |model|
+        db_conn.exec("DELETE FROM #{conn.adapter.quote_ident(model.prostore_table_name)}")
+      end
+    end
+  end
+
+  # Convenience alias for test teardown — identical to `delete_all`.
+  def self.test_reset(models : Array(Prostore::Model.class) = Prostore.models,
+                      conn : Connection = Prostore.default_connection) : Nil
+    delete_all(models, conn)
+  end
 end
