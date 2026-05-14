@@ -67,22 +67,29 @@ module Prostore
         "\e[#{code}m#{s}#{RESET}"
       end
 
-      # Truncate string to `width` terminal columns, appending "…" if cut.
+      # Visible (printable) length — excludes ANSI escape sequences.
+      def self.visible_size(s : String) : Int32
+        s.gsub(/\e\[[0-9;]*m/, "").chars.size
+      end
+
+      # Truncate string to `width` visible columns, appending "…" if cut.
+      # Strips ANSI codes before measuring; truncated output is plain text.
       def self.trunc(s : String, width : Int32) : String
         return s if width <= 0
         return "" if s.empty?
-        chars = s.chars
+        plain = s.gsub(/\e\[[0-9;]*m/, "")
+        chars = plain.chars
         return s if chars.size <= width
         chars[0, width - 1].join + "…"
       end
 
-      # Pad or truncate to exactly `width` columns.
+      # Pad or truncate to exactly `width` visible columns.
       def self.fit(s : String, width : Int32) : String
-        chars = s.chars
-        if chars.size >= width
+        vis = visible_size(s)
+        if vis >= width
           trunc(s, width)
         else
-          s + " " * (width - chars.size)
+          s + " " * (width - vis)
         end
       end
     end
