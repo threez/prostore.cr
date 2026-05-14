@@ -102,6 +102,11 @@ module Prostore
         (1..count).map { |name| placeholder(name) }.join(", ")
       end
 
+      # The operator for a case-insensitive substring match in a WHERE
+      # clause.  SQLite's `LIKE` is case-insensitive for ASCII by default;
+      # PostgreSQL exposes `ILIKE` for the same purpose.
+      abstract def like_operator : String
+
       # Write a point-in-time backup to `dest` (an absolute file path).
       # SQLite uses `VACUUM INTO`; PostgreSQL shells out to `pg_dump`.
       abstract def backup(dest : String) : Nil

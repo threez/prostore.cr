@@ -72,6 +72,10 @@ module Prostore
           "?"
         end
 
+        def like_operator : String
+          "LIKE"
+        end
+
         def backup(dest : String) : Nil
           @db.exec("VACUUM INTO '#{dest.gsub("'", "''")}'")
         end
