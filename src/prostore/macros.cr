@@ -103,39 +103,43 @@ class Prostore::Model
         raise "field #{name} on #{@type.name}: lazy: requires the field type to be T? (ADR-0004)"
       end
 
-      # Distinguish SQL.expr defaults from Crystal lambdas. We capture the
-      # SQL string when it's an Expr literal; otherwise nil (a lambda was
-      # provided and lives in generated code, not the schema struct).
-      if has_default && opts[:default].is_a?(StringLiteral)
-        raise "field #{name} on #{@type.name}: default: does not accept a bare String literal. " \
-              "Use SQL.expr(\"...\") for a SQL expression, or a lambda ->(_m : #{@type.name}) { ... } " \
-              "for a Crystal-side default (ADR-0011)."
-      end
-
-      if has_backfill && opts[:backfill].is_a?(StringLiteral)
-        raise "field #{name} on #{@type.name}: backfill: does not accept a bare String literal. " \
-              "Use SQL.expr(\"...\") for a SQL expression, or a lambda ->(_m : #{@type.name}) { ... } " \
-              "for a Crystal-side backfill (ADR-0011)."
-      end
-
+      # Scalar literals (Bool, Number, String) are auto-wrapped in their SQL
+      # equivalents. SQL.expr("...") and Crystal lambdas are also accepted.
       default_sql = nil
       if has_default
-        if opts[:default].is_a?(Call) && opts[:default].name.id.stringify == "expr"
-          # SQL.expr("...") — first argument is a string literal.
+        if opts[:default].is_a?(BoolLiteral)
+          default_sql = opts[:default].id.stringify
+        elsif opts[:default].is_a?(NumberLiteral)
+          default_sql = opts[:default].id.stringify
+        elsif opts[:default].is_a?(StringLiteral)
+          default_sql = "'" + opts[:default].id.stringify.gsub(/'/, "''") + "'"
+        elsif opts[:default].is_a?(Call) && opts[:default].name.id.stringify == "expr"
           default_sql = opts[:default].args[0].is_a?(StringLiteral) ? opts[:default].args[0] : nil
           if default_sql.nil?
             raise "field #{name} on #{@type.name}: SQL.expr requires a string literal argument"
           end
+        elsif !opts[:default].is_a?(ProcLiteral)
+          raise "field #{name} on #{@type.name}: default: accepts SQL.expr(...), a Crystal lambda, " \
+                "or a scalar literal (Bool, Int, String). Got #{opts[:default].class_name}."
         end
       end
 
       backfill_sql = nil
       if has_backfill
-        if opts[:backfill].is_a?(Call) && opts[:backfill].name.id.stringify == "expr"
+        if opts[:backfill].is_a?(BoolLiteral)
+          backfill_sql = opts[:backfill].id.stringify
+        elsif opts[:backfill].is_a?(NumberLiteral)
+          backfill_sql = opts[:backfill].id.stringify
+        elsif opts[:backfill].is_a?(StringLiteral)
+          backfill_sql = "'" + opts[:backfill].id.stringify.gsub(/'/, "''") + "'"
+        elsif opts[:backfill].is_a?(Call) && opts[:backfill].name.id.stringify == "expr"
           backfill_sql = opts[:backfill].args[0].is_a?(StringLiteral) ? opts[:backfill].args[0] : nil
           if backfill_sql.nil?
             raise "field #{name} on #{@type.name}: SQL.expr requires a string literal argument"
           end
+        elsif !opts[:backfill].is_a?(ProcLiteral)
+          raise "field #{name} on #{@type.name}: backfill: accepts SQL.expr(...), a Crystal lambda, " \
+                "or a scalar literal (Bool, Int, String). Got #{opts[:backfill].class_name}."
         end
       end
 

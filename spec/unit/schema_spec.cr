@@ -30,6 +30,13 @@ private module SpecNs
   end
 end
 
+private class SpecLiteralDefaults < Prostore::Model
+  field 1, :id, Int64, primary: true, auto_increment: true
+  field 2, :active, Bool, default: false, backfill: false
+  field 3, :count, Int32, default: 0, backfill: 0
+  field 4, :label, String, default: "none", backfill: "none"
+end
+
 describe "Prostore::Model schema introspection" do
   it "registers every subclass in Prostore.models" do
     Prostore.models.should contain(SpecUser)
@@ -84,6 +91,26 @@ describe "Prostore::Model schema introspection" do
 
     it "exposes a primary_key helper" do
       SpecUser.prostore_schema.primary_key.try(&.name).should eq("id")
+    end
+  end
+
+  describe "scalar literal auto-wrap for default: / backfill:" do
+    it "wraps false BoolLiteral as SQL 'false'" do
+      f = SpecLiteralDefaults.prostore_schema.field(:active).not_nil!
+      f.default_sql.should eq("false")
+      f.backfill_sql.should eq("false")
+    end
+
+    it "wraps NumberLiteral as SQL integer string" do
+      f = SpecLiteralDefaults.prostore_schema.field(:count).not_nil!
+      f.default_sql.should eq("0")
+      f.backfill_sql.should eq("0")
+    end
+
+    it "wraps StringLiteral in SQL single quotes" do
+      f = SpecLiteralDefaults.prostore_schema.field(:label).not_nil!
+      f.default_sql.should eq("'none'")
+      f.backfill_sql.should eq("'none'")
     end
   end
 end
