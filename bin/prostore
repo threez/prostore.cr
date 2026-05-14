@@ -17,6 +17,8 @@ Usage:
   prostore migrate status        Show migration history and outstanding drift
   prostore migrate abort <id>    Mark an in-progress migration as aborted
   prostore drift check           Dry-run drift detection
+  prostore backup <destination>  Write a backup to <destination>
+                                 Supports strftime tokens: %Y %m %d %H %M %S
 USAGE
 
 url = ENV["DATABASE_URL"]?
@@ -36,6 +38,9 @@ begin
     Prostore::Migration::CLI.abort(conn, id)
   when ["drift", "check"]
     Prostore::Migration::CLI.drift_check(conn)
+  when ["backup", _]
+    path = Prostore::Backup.run(conn, ARGV[1])
+    STDOUT.puts "Backup written to #{path}"
   else
     STDERR.puts USAGE
     exit 1

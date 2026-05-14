@@ -1,5 +1,6 @@
 require "db"
 require "pg"
+require "uri"
 require "../base"
 require "./types"
 require "./ddl"
@@ -19,6 +20,10 @@ module Prostore
       # can do natively. ApplyNotNull and AddForeignKey/DropForeignKey honor
       # these and avoid the SQLite table-rebuild dance.
       class Adapter < Prostore::Adapter::Base
+        def initialize(@db : DB::Database, @url : String)
+          super(@db)
+        end
+
         def quote_ident(name : String) : String
           DDL.quote_ident(name)
         end
@@ -88,6 +93,23 @@ module Prostore
 
         def placeholder(n : Int32) : String
           "$#{n}"
+        end
+
+        def backup(dest : String) : Nil
+          uri = URI.parse(@url)
+          args = ["-Fp", "-f", dest]
+          args += ["-h", uri.host.not_nil!] if uri.host
+          args += ["-p", uri.port.to_s] if uri.port
+          args += ["-U", uri.user.not_nil!] if uri.user
+          db_name = uri.path.lstrip('/')
+          args << db_name unless db_name.empty?
+          env = {"PGPASSWORD" => uri.password || ""}
+          stderr = IO::Memory.new
+          result = Process.run("pg_dump", args: args, env: env,
+            input: Process::Redirect::Close,
+            output: Process::Redirect::Close,
+            error: stderr)
+          raise Prostore::Error.new("pg_dump failed (exit #{result.exit_code}): #{stderr}") unless result.success?
         end
 
         private def build_pk_lookup_for(definition : Schema::Definition) : Hash(String, Array(String))

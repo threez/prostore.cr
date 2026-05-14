@@ -903,6 +903,57 @@ conn = Prostore.setup(url, [User, Post] of Prostore::Model.class)
 
 ---
 
+## Backup
+
+`Prostore::Backup.run` writes a point-in-time backup of the database to a
+destination path. The destination may contain strftime tokens (`%Y %m %d
+%H %M %S`), which are expanded to the current UTC time — so a single
+`cron` line produces naturally-rotated, timestamped files:
+
+```crystal
+path = Prostore::Backup.run(conn, "/var/backups/app_%Y%m%d_%H%M%S.db")
+# => "/var/backups/app_20260514_103045.db"
+```
+
+Or via the operator CLI:
+
+```sh
+bin/prostore backup /var/backups/app_%Y%m%d_%H%M%S.db
+# Backup written to /var/backups/app_20260514_103045.db
+```
+
+### SQLite
+
+Uses [`VACUUM INTO`](https://www.sqlite.org/lang_vacuum.html) — an online,
+non-blocking backup that works under WAL mode and produces a defragmented
+copy. Requires SQLite 3.27.0 or later (released 2019).
+
+### PostgreSQL
+
+Shells out to `pg_dump` (plain-text format). `pg_dump` must be available in
+`PATH`. Connection parameters (host, port, user, database) are derived from
+`DATABASE_URL`; the password is passed via `PGPASSWORD`.
+
+### Cron examples
+
+```sh
+# SQLite — hourly backup (one file per hour, 24 kept by filename convention)
+0 * * * * DATABASE_URL=sqlite3:///var/app/app.db \
+  /path/to/bin/prostore backup /var/backups/app_%Y%m%d_%H.db
+
+# SQLite — every 6 hours
+0 */6 * * * DATABASE_URL=sqlite3:///var/app/app.db \
+  /path/to/bin/prostore backup /var/backups/app_%Y%m%d_%H.db
+
+# PostgreSQL — daily dump at 03:00
+0 3 * * * DATABASE_URL=postgres://user:pass@localhost/mydb \
+  /path/to/bin/prostore backup /var/backups/mydb_%Y%m%d.sql
+```
+
+Use OS-level tools (`find -mtime`, `logrotate`) to prune old backups.
+
+---
+
 ## Operator CLI
 
 The `bin/prostore` binary exposes operator commands. Set `DATABASE_URL` in the

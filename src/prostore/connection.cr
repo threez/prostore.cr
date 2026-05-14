@@ -17,15 +17,16 @@ module Prostore
   class Connection
     getter db : DB::Database
     getter adapter : Adapter::Base
+    getter url : String
 
     def self.open(url : String) : Connection
       db = DB.open(url)
       adapter = create_adapter(db, url)
       db.setup_connection { |conn| adapter.session_setup(conn) }
-      new(db, adapter)
+      new(db, adapter, url)
     end
 
-    def initialize(@db : DB::Database, @adapter : Adapter::Base)
+    def initialize(@db : DB::Database, @adapter : Adapter::Base, @url : String)
     end
 
     def close : Nil
@@ -73,7 +74,7 @@ module Prostore
       when .starts_with?("sqlite3:")
         Adapter::SQLite::Adapter.new(db, extract_sqlite_pragmas(url))
       when .starts_with?("postgres:"), .starts_with?("postgresql:")
-        Adapter::Postgres::Adapter.new(db)
+        Adapter::Postgres::Adapter.new(db, url)
       else
         raise Prostore::Error.new("Unsupported database URL: #{url} (supported schemes: sqlite3:, postgres:)")
       end

@@ -108,5 +108,8 @@ jobs:
 
       - run: shards install
 
+      - name: Install PostgreSQL client tools
+        run: sudo apt-get install -y postgresql-client
+
       - name: Run specs (shared integration on PostgreSQL)
         run: crystal spec spec/integration/shared --order=random
