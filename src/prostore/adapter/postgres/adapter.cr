@@ -95,6 +95,10 @@ module Prostore
           "$#{n}"
         end
 
+        def like_operator : String
+          "ILIKE"
+        end
+
         def backup(dest : String) : Nil
           uri = URI.parse(@url)
           args = ["-Fp", "-f", dest]

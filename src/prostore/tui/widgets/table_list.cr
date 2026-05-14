@@ -44,6 +44,10 @@ module Prostore
         end
       end
 
+      def status_hint : String
+        " ↑↓:table  Enter:open  q:quit"
+      end
+
       def handle_key(ev : KeyEvent) : Bool
         case ev.key
         when Key::Up

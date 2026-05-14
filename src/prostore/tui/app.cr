@@ -2,6 +2,9 @@ require "./term"
 require "./keys"
 require "./screen"
 require "./widget"
+require "./column_types"
+require "./style"
+require "./validation"
 require "./browser"
 require "./widgets/table_list"
 require "./widgets/record_grid"
@@ -15,8 +18,11 @@ module Prostore
     private record NavRecordGrid, table : String
     private record NavRecordDetail, table : String, pk_col : String, pk_val : String
     private record NavNewRecord, table : String
+    # Holds a reference to the source detail widget so it can be restored without
+    # rebuilding from DB when the picker is dismissed.
+    private record NavFKPicker, fk_table : String, col_name : String, detail : RecordDetail
 
-    private alias NavEntry = NavTableList | NavRecordGrid | NavRecordDetail | NavNewRecord
+    private alias NavEntry = NavTableList | NavRecordGrid | NavRecordDetail | NavNewRecord | NavFKPicker
 
     class App
       TABLE_LIST_WIDTH = 44
@@ -37,6 +43,7 @@ module Prostore
 
         @table_list    = TableList.new(1, 1, TABLE_LIST_WIDTH, rows - 2, @browser)
         @record_grid   = RecordGrid.new(TABLE_LIST_WIDTH + 1, 1, grid_w, rows - 2, @browser)
+        @fk_picker     = RecordGrid.new(1, 1, cols, rows - 2, @browser)
         @record_detail = nil.as(RecordDetail?)
 
         wire_table_list
@@ -84,6 +91,9 @@ module Prostore
           @record_detail = build_detail(nav.table, nav.pk_col, nav.pk_val)
         when NavNewRecord
           @record_detail = build_new_record(nav.table)
+        when NavFKPicker
+          # Managed by push_fk_picker / pop_fk_picker — do not rebuild detail.
+          @record_detail = nil
         else
           @record_detail = nil
         end
@@ -91,6 +101,8 @@ module Prostore
 
       private def render : Nil
         case current
+        when NavFKPicker
+          @fk_picker.render(@screen)
         when NavRecordDetail, NavNewRecord
           @record_detail.try &.render(@screen)
         else
@@ -111,13 +123,16 @@ module Prostore
       end
 
       private def render_status_bar : Nil
+        # Delegate to the focused widget — it knows its current state best.
+        # NavFKPicker is kept inline since the picker is a RecordGrid in a
+        # read-only role and its own `status_hint` would describe the
+        # mutation-friendly nav-mode bindings.
         hint = case current
-               when NavTableList
-                 " ↑↓:table  Enter:open  q:quit"
-               when NavRecordGrid
-                 " ESC:back  ↑↓:row  ←→:cols  Enter:detail  PgUp/Dn:page  n:new  d:delete  q:quit"
-               when NavRecordDetail, NavNewRecord
-                 " ESC:back  ↑↓:field  e:edit  s:save  d:delete"
+               when NavTableList                   then @table_list.status_hint
+               when NavRecordGrid                  then @record_grid.status_hint
+               when NavRecordDetail, NavNewRecord  then @record_detail.try(&.status_hint) || ""
+               when NavFKPicker
+                 " ESC:cancel  ↑↓:row  ←→:cols  Enter:select  PgUp/Dn:page"
                else
                  ""
                end
@@ -125,7 +140,7 @@ module Prostore
       end
 
       private def handle_key(ev : KeyEvent) : Nil
-        in_detail = current.is_a?(NavRecordDetail) || current.is_a?(NavNewRecord)
+        in_detail = current.is_a?(NavRecordDetail) || current.is_a?(NavNewRecord) || current.is_a?(NavFKPicker)
 
         if ev.key == Key::CtrlC || (ev.key == Key::Char && ev.char == 'q' && !in_detail)
           @running = false
@@ -133,6 +148,16 @@ module Prostore
         end
 
         case current
+        when NavFKPicker
+          if ev.key == Key::Esc
+            pop_fk_picker(nil)
+          elsif ev.key == Key::Enter
+            pop_fk_picker(@fk_picker.selected_pk)
+          elsif ev.key == Key::Char && (ev.char == 'd' || ev.char == 'n')
+            nil  # read-only picker — suppress mutations
+          else
+            @fk_picker.handle_key(ev)
+          end
         when NavTableList
           if ev.key == Key::Enter
             table = @table_list.selected_table
@@ -145,7 +170,10 @@ module Prostore
           end
         when NavRecordGrid
           if ev.key == Key::Esc
-            pop
+            # Delegate first — the grid consumes Esc while its search input
+            # is open so we don't accidentally pop back to the table list.
+            consumed = @record_grid.handle_key(ev)
+            pop unless consumed
           else
             @record_grid.handle_key(ev)
           end
@@ -159,6 +187,27 @@ module Prostore
             @record_detail.try &.handle_key(ev)
           end
         end
+      end
+
+      # Push the FK picker without going through sync_detail so the source
+      # detail widget's unsaved edits are preserved.
+      private def push_fk_picker(fk_table : String, col_name : String, source : RecordDetail) : Nil
+        @fk_picker.load_table(fk_table)
+        @fk_picker.focused = true
+        @stack << NavFKPicker.new(fk_table, col_name, source)
+        @record_detail = nil
+      end
+
+      # Pop the FK picker and restore the source detail widget.  If a PK value
+      # was selected, write it directly into the source row before restoring.
+      private def pop_fk_picker(selected_pk : String?) : Nil
+        nav = current
+        return unless nav.is_a?(NavFKPicker)
+        @stack.pop if @stack.size > 1
+        if pk = selected_pk
+          nav.detail.set_row_value(nav.col_name, pk)
+        end
+        @record_detail = nav.detail
       end
 
       private def wire_table_list : Nil
@@ -210,6 +259,12 @@ module Prostore
           if ref_pk
             push NavRecordDetail.new(ref_table, ref_pk, ref_val)
           end
+          nil
+        }
+
+        # Browse an FK table to pick a value; restores this detail on return.
+        ov.on_pick_fk = ->(fk_table : String, col_name : String) {
+          push_fk_picker(fk_table, col_name, ov)
           nil
         }
       end

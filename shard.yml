@@ -8,6 +8,10 @@ crystal: '>= 1.20.1'
 
 license: MIT
 
+targets:
+  prostore:
+    main: src/prostore_cli.cr
+
 dependencies:
   sqlite3:
     github: crystal-lang/crystal-sqlite3

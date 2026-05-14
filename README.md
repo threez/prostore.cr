@@ -918,7 +918,7 @@ path = Prostore::Backup.run(conn, "/var/backups/app_%Y%m%d_%H%M%S.db")
 Or via the operator CLI:
 
 ```sh
-bin/prostore backup /var/backups/app_%Y%m%d_%H%M%S.db
+prostore backup /var/backups/app_%Y%m%d_%H%M%S.db
 # Backup written to /var/backups/app_20260514_103045.db
 ```
 
@@ -939,15 +939,15 @@ Shells out to `pg_dump` (plain-text format). `pg_dump` must be available in
 ```sh
 # SQLite — hourly backup (one file per hour, 24 kept by filename convention)
 0 * * * * DATABASE_URL=sqlite3:///var/app/app.db \
-  /path/to/bin/prostore backup /var/backups/app_%Y%m%d_%H.db
+  /path/to/prostore backup /var/backups/app_%Y%m%d_%H.db
 
 # SQLite — every 6 hours
 0 */6 * * * DATABASE_URL=sqlite3:///var/app/app.db \
-  /path/to/bin/prostore backup /var/backups/app_%Y%m%d_%H.db
+  /path/to/prostore backup /var/backups/app_%Y%m%d_%H.db
 
 # PostgreSQL — daily dump at 03:00
 0 3 * * * DATABASE_URL=postgres://user:pass@localhost/mydb \
-  /path/to/bin/prostore backup /var/backups/mydb_%Y%m%d.sql
+  /path/to/prostore backup /var/backups/mydb_%Y%m%d.sql
 ```
 
 Use OS-level tools (`find -mtime`, `logrotate`) to prune old backups.
@@ -956,20 +956,20 @@ Use OS-level tools (`find -mtime`, `logrotate`) to prune old backups.
 
 ## Operator CLI
 
-The `bin/prostore` binary exposes operator commands. Set `DATABASE_URL` in the
+The `prostore` binary exposes operator commands. Set `DATABASE_URL` in the
 environment:
 
 ```sh
 export DATABASE_URL=sqlite3://app.db
 
 # Show migration history and drift summary
-bin/prostore migrate status
+prostore migrate status
 
 # Dry-run drift check (no DDL applied)
-bin/prostore drift check
+prostore drift check
 
 # Abort a stuck in-progress migration (does NOT revert completed steps)
-bin/prostore migrate abort 42
+prostore migrate abort 42
 ```
 
 The same operations are available programmatically:
