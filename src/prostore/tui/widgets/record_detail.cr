@@ -85,7 +85,8 @@ module Prostore
                elsif @is_new
                  " ↑↓:field  e:edit  s:insert  Esc:back"
                else
-                 " ↑↓:field  e:edit  f:follow-fk  s:save  d:delete  Esc:back"
+                 fk_part = current_col.try { |c| fk_for_col(c.name) } ? "  f:follow-fk" : ""
+                 " ↑↓:field  e:edit#{fk_part}  s:save  d:delete  Esc:back"
                end
         screen.at(y + height - 1, x + 1, Term.fit(Term.dim(hint), inner_w))
       end
