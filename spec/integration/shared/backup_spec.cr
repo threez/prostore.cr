@@ -14,10 +14,10 @@ BACKENDS.each do |backend|
       end
 
       pid = Process.pid
-      src_path  = "/tmp/prostore_backup_src_#{pid}.db"
+      src_path = "/tmp/prostore_backup_src_#{pid}.db"
       dest_path = "/tmp/prostore_backup_dst_#{pid}.db"
-      src_url   = backend.name == "sqlite" ? "sqlite3://#{src_path}" : backend.url
-      dest      = backend.name == "sqlite" ? dest_path : "/tmp/prostore_backup_pg_#{pid}.sql"
+      src_url = backend.name == "sqlite" ? "sqlite3://#{src_path}" : backend.url
+      dest = backend.name == "sqlite" ? dest_path : "/tmp/prostore_backup_pg_#{pid}.sql"
 
       conn = Prostore::Connection.open(src_url)
       begin
@@ -54,12 +54,11 @@ BACKENDS.each do |backend|
         next
       end
 
-      pid      = Process.pid
+      pid = Process.pid
       src_path = "/tmp/prostore_ts_src_#{pid}.db"
-      src_url  = backend.name == "sqlite" ? "sqlite3://#{src_path}" : backend.url
-      template = backend.name == "sqlite" \
-        ? "/tmp/prostore_ts_dst_#{pid}_%Y%m%d_%H%M%S.db" \
-        : "/tmp/prostore_ts_pg_#{pid}_%Y%m%d_%H%M%S.sql"
+      src_url = backend.name == "sqlite" ? "sqlite3://#{src_path}" : backend.url
+      ext = backend.name == "sqlite" ? "db" : "sql"
+      template = "/tmp/prostore_ts_dst_#{pid}_%Y%m%d_%H%M%S.#{ext}"
 
       conn = Prostore::Connection.open(src_url)
       actual = ""
