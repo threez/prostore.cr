@@ -185,6 +185,12 @@ module Prostore
                     has_backfill: {{ f[:has_backfill] }},
                     backfill_sql: {{ f[:backfill_sql] }},
                     has_lazy: {{ f[:has_lazy] }},
+                    {% if f[:is_enum] %}
+                    enum_members: {{ f[:enum_class_id].id }}.values.map { |__m|
+                      ::Prostore::Schema::EnumMember.new(name: __m.to_s, value: __m.value.to_i64)
+                    },
+                    enum_is_flags: {{ f[:enum_is_flags] }},
+                    {% end %}
                   ),
                 {% end %}
               ] of ::Prostore::Schema::Field,
@@ -382,6 +388,12 @@ module Prostore
             \{% elsif pt.starts_with?("array_") %}
               ___raw = ::Prostore::Records.read_array_json(\{{ rs }})
               \{{ instance }}.\{{ f[:name].id }} = ___raw.try { |s| \{{ f[:ruby_type] }}.from_json(s) }
+            \{% elsif pt == "enum_string" %}
+              ___raw = \{{ rs }}.read(::String?)
+              \{{ instance }}.\{{ f[:name].id }} = ___raw.try { |s| \{{ f[:enum_class_id].id }}.parse(s) }
+            \{% elsif pt == "enum_int" %}
+              ___raw = ::Prostore::Records.read_int64(\{{ rs }})
+              \{{ instance }}.\{{ f[:name].id }} = ___raw.try { |i| \{{ f[:enum_class_id].id }}.from_value(i) }
             \{% else %}
               \{{ instance }}.\{{ f[:name].id }} = \{{ rs }}.read(\{{ f[:ruby_type] }})
             \{% end %}

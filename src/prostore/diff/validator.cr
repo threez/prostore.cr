@@ -78,6 +78,11 @@ module Prostore
               "auto_increment cannot be added or removed in place (ADR-0013)."
             )
           end
+
+          # ADR-0016: enum member set may grow (additive) but never shrink, and
+          # the integer value of an existing member is fixed. Adds are silent
+          # here; the engine emits an AlterEnumMembers op to widen the CHECK.
+          validate_enum_members(definition, tag, field, row)
         end
 
         # ADR-0011: non-nullable add to a non-empty table requires `backfill:`.
@@ -99,6 +104,51 @@ module Prostore
               "or `backfill:` (ADR-0011). Add one, or make the column nullable."
             )
           end
+        end
+      end
+
+      private def validate_enum_members(definition : Schema::Definition,
+                                        tag : Int32,
+                                        field : Schema::Field,
+                                        row : Drift::SchemaTable::Row) : Nil
+        stored = row.enum_members
+        return if stored.nil? || stored.empty?
+
+        desired = field.enum_members || [] of Schema::EnumMember
+
+        removed = stored.reject do |stored_member|
+          desired.any? { |desired_member| desired_member.name == stored_member.name }
+        end
+        unless removed.empty?
+          raise Prostore::SchemaError.new(
+            "Field tag #{tag} on #{definition.table_name}: enum member(s) " \
+            "#{removed.map(&.name).join(", ")} removed. Removing an enum member is " \
+            "forbidden because existing rows may still carry that value (ADR-0016). " \
+            "Keep the member declared, or reserve this field tag (ADR-0002) and add a " \
+            "new field with the trimmed set."
+          )
+        end
+
+        desired.each do |desired_member|
+          if existing = stored.find { |stored_member| stored_member.name == desired_member.name }
+            if existing.value != desired_member.value
+              raise Prostore::SchemaError.new(
+                "Field tag #{tag} on #{definition.table_name}: enum member " \
+                "#{desired_member.name} value changed (#{existing.value} → #{desired_member.value}). Forbidden " \
+                "in-place — `enum_int`-stored rows would be silently misread (ADR-0016). " \
+                "Reserve the tag and add a new field if the value space must change."
+              )
+            end
+          end
+        end
+
+        if !row.enum_is_flags.nil? && row.enum_is_flags != field.enum_is_flags
+          raise Prostore::SchemaError.new(
+            "Field tag #{tag} on #{definition.table_name}: @[Flags] annotation " \
+            "toggled (#{row.enum_is_flags} → #{field.enum_is_flags}). The flags / " \
+            "non-flags distinction changes how integer values are interpreted; " \
+            "forbidden in-place (ADR-0016)."
+          )
         end
       end
 

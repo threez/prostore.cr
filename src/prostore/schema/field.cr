@@ -25,13 +25,22 @@ module Prostore
       default_sql : String?,
       has_backfill : Bool,
       backfill_sql : String?,
-      has_lazy : Bool do
+      has_lazy : Bool,
+      enum_members : Array(EnumMember)? = nil,
+      enum_is_flags : Bool = false do
       def has_lambda_default? : Bool
         has_default && default_sql.nil?
       end
 
       def has_lambda_backfill? : Bool
         has_backfill && backfill_sql.nil?
+      end
+
+      # Stable CHECK-constraint name for an enum field (ADR-0016). Used by
+      # both the CREATE TABLE renderer and the `AlterEnumMembers` step so
+      # the constraint can be located and replaced at migration time.
+      def enum_check_constraint_name(table : String) : String
+        "#{table}_#{name}_enum_chk"
       end
     end
   end

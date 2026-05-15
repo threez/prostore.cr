@@ -29,7 +29,7 @@ module Prostore
           end
         end
 
-        def render_column(field : Schema::Field) : String
+        def render_column(field : Schema::Field, table : String? = nil) : String
           parts = [quote_ident(field.name)] of String
 
           if field.primary && field.auto_increment
@@ -47,7 +47,38 @@ module Prostore
             parts << "DEFAULT (#{sql})"
           end
 
+          if check = render_enum_check(field, table)
+            parts << check
+          end
+
           parts.join(' ')
+        end
+
+        # Render the `CHECK (...)` clause that constrains an enum column to
+        # its declared member set (ADR-0016). Returns nil for non-enum fields.
+        # When a table name is supplied the constraint is emitted in named
+        # form so the `AlterEnumMembers` step can drop and re-add it by name
+        # at migration time.
+        def render_enum_check(field : Schema::Field, table : String? = nil) : String?
+          members = field.enum_members
+          return nil if members.nil? || members.empty?
+          col = quote_ident(field.name)
+          body =
+            if field.enum_is_flags
+              max = members.sum(&.value)
+              "#{col} >= 0 AND #{col} <= #{max}"
+            elsif field.portable_type == "enum_string"
+              list = members.map { |member| "'#{member.name.gsub("'", "''")}'" }.join(", ")
+              "#{col} IN (#{list})"
+            else
+              list = members.map(&.value).join(", ")
+              "#{col} IN (#{list})"
+            end
+          if table
+            "CONSTRAINT #{quote_ident(field.enum_check_constraint_name(table))} CHECK (#{body})"
+          else
+            "CHECK (#{body})"
+          end
         end
 
         def render_foreign_key_clause(fk : Schema::ForeignKey, target_pk_columns : Array(String)) : String
@@ -67,7 +98,7 @@ module Prostore
           io << "CREATE TABLE " << quote_ident(definition.table_name) << " (\n"
           parts = [] of String
           definition.fields.sort_by(&.tag).each do |field|
-            parts << "  " + render_column(field)
+            parts << "  " + render_column(field, definition.table_name)
           end
           definition.foreign_keys.sort_by(&.tag).each do |fk|
             target_pk = pk_lookup[fk.references_table]? ||

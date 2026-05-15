@@ -1,3 +1,4 @@
+require "./schema/enum_member"
 require "./schema/field"
 require "./schema/index"
 require "./schema/foreign_key"
