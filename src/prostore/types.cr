@@ -37,8 +37,13 @@ module Prostore
     # these (NUMERIC for decimal on PG, etc.); the wire format is just String.
     COERCED = ["uuid", "decimal", "json"]
 
+    # Enum portable tags (ADR-0016). Enum values move through the wire as
+    # String (member name) or Int64 (underlying integer); the model boundary
+    # reconstructs the Crystal enum via `EnumClass.parse` / `EnumClass.from_value`.
+    ENUM_TAGS = ["enum_string", "enum_int"]
+
     def self.coerced?(portable_type : String) : Bool
-      COERCED.includes?(portable_type) || array?(portable_type)
+      COERCED.includes?(portable_type) || array?(portable_type) || enum?(portable_type)
     end
 
     def self.array?(portable_type : String) : Bool
@@ -49,6 +54,10 @@ module Prostore
     def self.array_inner(portable_type : String) : String
       raise Prostore::SchemaError.new("not an array tag: #{portable_type}") unless array?(portable_type)
       portable_type[6..]
+    end
+
+    def self.enum?(portable_type : String) : Bool
+      ENUM_TAGS.includes?(portable_type)
     end
   end
 end

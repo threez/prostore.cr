@@ -30,6 +30,14 @@ module Prostore
           io << ':' << (field.has_backfill ? "backfill" : "_")
           io << ':' << (field.backfill_sql || "_")
           io << ':' << (field.has_lazy ? "lazy" : "_")
+          io << ':' << (field.enum_is_flags ? "flags" : "_")
+          io << ':' << (
+            if members = field.enum_members
+              members.map { |member| "#{member.name}=#{member.value}" }.join(',')
+            else
+              "_"
+            end
+          )
           io << '\n'
         end
 
