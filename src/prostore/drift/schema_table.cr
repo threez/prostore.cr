@@ -33,6 +33,8 @@ module Prostore
         has_backfill : Bool? = nil,
         backfill_sql : String? = nil,
         has_lazy : Bool? = nil,
+        enum_members : Array(Schema::EnumMember)? = nil,
+        enum_is_flags : Bool? = nil,
         # KIND_INDEX
         index_columns : Array(String)? = nil,
         index_unique : Bool? = nil,
@@ -52,6 +54,7 @@ module Prostore
         table_name kind tag current_name
         portable_type nullable is_primary auto_increment
         has_default default_sql has_backfill backfill_sql has_lazy
+        enum_members enum_is_flags
         index_columns index_unique index_where_sql
         fk_columns fk_references_table fk_references_columns fk_on_delete fk_on_update
       ]
@@ -98,6 +101,8 @@ module Prostore
           has_backfill: field.has_backfill,
           backfill_sql: field.backfill_sql,
           has_lazy: field.has_lazy,
+          enum_members: field.enum_members,
+          enum_is_flags: field.enum_members.nil? ? nil : field.enum_is_flags,
         ))
       end
 
@@ -159,6 +164,8 @@ module Prostore
           has_backfill: read_bool(rs),
           backfill_sql: rs.read(String?),
           has_lazy: read_bool(rs),
+          enum_members: read_enum_members(rs),
+          enum_is_flags: read_bool(rs),
           index_columns: read_string_array(rs),
           index_unique: read_bool(rs),
           index_where_sql: rs.read(String?),
@@ -185,6 +192,26 @@ module Prostore
         raw = rs.read(String?)
         return nil if raw.nil?
         Array(String).from_json(raw)
+      end
+
+      # Enum members are JSON-encoded as `[[name, value], ...]` — a compact
+      # form (vs. the typed record's `[{"name":..,"value":..}, ...]`) keeps
+      # the bookkeeping row small and avoids a JSON::Serializable dependency
+      # on the schema record. Decode mirrors that shape.
+      private def read_enum_members(rs : DB::ResultSet) : Array(Schema::EnumMember)?
+        raw = rs.read(String?)
+        return nil if raw.nil?
+        parsed = JSON.parse(raw)
+        arr = parsed.as_a?
+        return nil if arr.nil?
+        arr.compact_map do |entry|
+          pair = entry.as_a?
+          next nil if pair.nil? || pair.size != 2
+          name = pair[0].as_s?
+          val = pair[1].as_i64?
+          next nil if name.nil? || val.nil?
+          Schema::EnumMember.new(name: name, value: val)
+        end
       end
 
       private def upsert(adapter : Prostore::Adapter::Base,
@@ -220,6 +247,8 @@ module Prostore
           bool_to_db(row.has_backfill),
           row.backfill_sql.as(::DB::Any),
           bool_to_db(row.has_lazy),
+          encode_enum_members(row.enum_members),
+          bool_to_db(row.enum_is_flags),
           encode_string_array(row.index_columns),
           bool_to_db(row.index_unique),
           row.index_where_sql.as(::DB::Any),
@@ -239,6 +268,20 @@ module Prostore
       private def encode_string_array(value : Array(String)?) : ::DB::Any
         return nil if value.nil?
         value.to_json.as(::DB::Any)
+      end
+
+      private def encode_enum_members(value : Array(Schema::EnumMember)?) : ::DB::Any
+        return nil if value.nil?
+        JSON.build do |json|
+          json.array do
+            value.each do |member|
+              json.array do
+                json.string member.name
+                json.number member.value
+              end
+            end
+          end
+        end.as(::DB::Any)
       end
     end
   end

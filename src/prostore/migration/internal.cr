@@ -22,7 +22,7 @@ module Prostore
     module Internal
       extend self
 
-      CURRENT_SCHEMA_VERSION = 2
+      CURRENT_SCHEMA_VERSION = 3
 
       alias Step = Proc(Prostore::Adapter::Base, Prostore::Adapter::Base::Executor, Nil)
 
@@ -30,6 +30,9 @@ module Prostore
         {
           2 => ->(adapter : Prostore::Adapter::Base, executor : Prostore::Adapter::Base::Executor) do
             split_definitions(adapter, executor)
+          end,
+          3 => ->(adapter : Prostore::Adapter::Base, executor : Prostore::Adapter::Base::Executor) do
+            add_enum_columns(adapter, executor)
           end,
         } of Int32 => Step
       end
@@ -60,19 +63,18 @@ module Prostore
 
       # Returns the version the database is currently at. If `prostore_meta`
       # holds an explicit `schema_version`, that is authoritative. Otherwise
-      # the layout of the legacy `prostore_schema` table tells us whether
-      # we are at v1 (has a `definition` column) or already at the current
-      # version (table absent or has the new shape).
+      # the layout of `prostore_schema` tells us where we stand: a `definition`
+      # column means v1; absence of `enum_members` means v2 (the typed-columns
+      # split has run but enum support hasn't); both present (or table absent
+      # entirely) means we are at the current version.
       def detect_current_version(adapter : Prostore::Adapter::Base,
                                  executor : Prostore::Adapter::Base::Executor) : Int32
         stored = read_version(adapter, executor)
         return stored if stored
 
-        if legacy_schema_table?(adapter, executor)
-          1
-        else
-          CURRENT_SCHEMA_VERSION
-        end
+        return 1 if legacy_schema_table?(adapter, executor)
+        return 2 if pre_v3_schema_table?(adapter, executor)
+        CURRENT_SCHEMA_VERSION
       end
 
       private def ensure_meta_table(adapter, executor) : Nil
@@ -102,6 +104,16 @@ module Prostore
         return false unless adapter.introspect_table_names(executor).includes?(Bookkeeping::SCHEMA_TABLE)
         live = adapter.introspect_table(Bookkeeping::SCHEMA_TABLE, executor)
         live.columns.any? { |col| col.name == "definition" }
+      end
+
+      # True when `prostore_schema` exists with the v2 typed-columns shape but
+      # without the v3 enum columns. Used to spot existing installs whose
+      # schema_version row was never seeded.
+      private def pre_v3_schema_table?(adapter, executor) : Bool
+        return false unless adapter.introspect_table_names(executor).includes?(Bookkeeping::SCHEMA_TABLE)
+        live = adapter.introspect_table(Bookkeeping::SCHEMA_TABLE, executor)
+        names = live.columns.map(&.name)
+        names.includes?("portable_type") && !names.includes?("enum_members")
       end
 
       private def refuse_if_in_flight!(adapter, executor) : Nil
@@ -300,6 +312,27 @@ module Prostore
         arr = value.as_a?
         return [] of String if arr.nil?
         arr.compact_map(&.as_s?)
+      end
+
+      # ---- v3 step ----------------------------------------------------------
+      # Adds the `enum_members` and `enum_is_flags` columns to
+      # `prostore_schema` (ADR-0016). Idempotent: if a column already exists
+      # (e.g., partial application followed by a recovery, or a fresh install
+      # that already has the v3 shape), the ALTER is skipped.
+
+      private V3_COLUMNS = [
+        {"enum_members", "TEXT"},
+        {"enum_is_flags", "INTEGER"},
+      ]
+
+      private def add_enum_columns(adapter, executor) : Nil
+        live = adapter.introspect_table(Bookkeeping::SCHEMA_TABLE, executor)
+        existing = live.columns.map(&.name).to_set
+        qt = adapter.quote_ident(Bookkeeping::SCHEMA_TABLE)
+        V3_COLUMNS.each do |(name, type)|
+          next if existing.includes?(name)
+          executor.exec("ALTER TABLE #{qt} ADD COLUMN #{name} #{type}")
+        end
       end
     end
   end

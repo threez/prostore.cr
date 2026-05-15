@@ -73,6 +73,8 @@ module Prostore
       # Postgres. The three small arrays (index columns, FK columns, FK
       # referenced columns) remain JSON-encoded text — neither backend has
       # a portable native array type that fits a single-table layout.
+      # `enum_members` is a JSON-encoded `[[name, value], ...]` array for
+      # columns whose type resolves to an Enum (ADR-0016).
       private def create_schema_sql(adapter : Prostore::Adapter::Base) : String
         <<-SQL
           CREATE TABLE IF NOT EXISTS #{adapter.quote_ident(SCHEMA_TABLE)} (
@@ -90,6 +92,8 @@ module Prostore
             has_backfill           INTEGER,
             backfill_sql           TEXT,
             has_lazy               INTEGER,
+            enum_members           TEXT,
+            enum_is_flags          INTEGER,
 
             index_columns          TEXT,
             index_unique           INTEGER,
