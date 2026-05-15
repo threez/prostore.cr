@@ -478,7 +478,7 @@ module Prostore
         @flags_editing = false
       end
 
-      private def current_enum_info : Browser::EnumColumn?
+      private def current_enum_info : EnumColumn?
         col = current_col
         col ? @enum_columns[col.name]? : nil
       end
@@ -488,7 +488,7 @@ module Prostore
       # under ADR-0017's naming algorithms); for `enum_int` by the
       # underlying integer. Returns 0 on no match so the picker always lands
       # on a defined member rather than a phantom index.
-      private def decode_enum_index(raw : String?, info : Browser::EnumColumn,
+      private def decode_enum_index(raw : String?, info : EnumColumn,
                                     portable_type : String?) : Int32
         return 0 if raw.nil?
         if portable_type == "enum_int"
@@ -506,7 +506,7 @@ module Prostore
       # value is fully contained in the mask (`(mask & m.value) == m.value`).
       # Zero-valued members (e.g. `None = 0`) are intentionally excluded —
       # they would otherwise match every mask and lead to confusing UI.
-      private def decode_flags_indices(raw : String?, info : Browser::EnumColumn) : Set(Int32)
+      private def decode_flags_indices(raw : String?, info : EnumColumn) : Set(Int32)
         result = Set(Int32).new
         return result if raw.nil?
         mask = raw.to_i64?
