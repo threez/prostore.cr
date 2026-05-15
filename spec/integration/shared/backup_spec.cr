@@ -21,6 +21,7 @@ BACKENDS.each do |backend|
 
       conn = Prostore::Connection.open(src_url)
       begin
+        backend.reset_state(conn)
         tbl = SBackupModel.prostore_table_name
         Prostore.migrate(conn, [SBackupModel] of Prostore::Model.class)
         backend.exec(conn, "INSERT INTO #{tbl} (name) VALUES (?)", "hello")
@@ -63,6 +64,7 @@ BACKENDS.each do |backend|
       conn = Prostore::Connection.open(src_url)
       actual = ""
       begin
+        backend.reset_state(conn)
         Prostore.migrate(conn, [SBackupModel] of Prostore::Model.class)
         actual = Prostore::Backup.run(conn, template)
 
