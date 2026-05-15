@@ -403,6 +403,20 @@ User.where(Prostore::Q.gt(:score, 50))
 User.where(tenant_id: 1_i64).where(Prostore::Q.gt(:score, 10))
 ```
 
+Pure-equality predicates collapse into a single `where` — kwargs are themselves
+ANDed, so prefer the one-call form:
+
+```crystal
+# Verbose
+User.where(id: id).where(token: token).where(status: "active")
+
+# Equivalent, preferred
+User.where(id: id, token: token, status: "active")
+```
+
+Chain only when one of the predicates can't live in kwargs (e.g., `Q.gt`, `Q.or`,
+`Q.not`).
+
 #### Ordering
 
 ```crystal
