@@ -68,6 +68,8 @@ module Prostore
           run_drop_foreign_key(adapter, executor, step)
         when Kind::ResetSequence
           run_reset_sequence(adapter, executor, step)
+        when Kind::AlterEnumMembers
+          run_alter_enum_members(adapter, executor, step)
         end
       end
 
@@ -143,9 +145,9 @@ module Prostore
       private def run_add_column(adapter, executor, step : Kind::AddColumn) : Nil
         col_def = case adapter
                   when Prostore::Adapter::SQLite::Adapter
-                    Prostore::Adapter::SQLite::DDL.render_column(step.field)
+                    Prostore::Adapter::SQLite::DDL.render_column(step.field, step.table_name)
                   when Prostore::Adapter::Postgres::Adapter
-                    Prostore::Adapter::Postgres::DDL.render_column(step.field)
+                    Prostore::Adapter::Postgres::DDL.render_column(step.field, step.table_name)
                   else
                     raise Prostore::MigrationError.new("AddColumn not implemented for adapter #{adapter.class}")
                   end
@@ -280,9 +282,9 @@ module Prostore
         )
         col_def = case adapter
                   when Prostore::Adapter::SQLite::Adapter
-                    Prostore::Adapter::SQLite::DDL.render_column(stripped)
+                    Prostore::Adapter::SQLite::DDL.render_column(stripped, step.table_name)
                   when Prostore::Adapter::Postgres::Adapter
-                    Prostore::Adapter::Postgres::DDL.render_column(stripped)
+                    Prostore::Adapter::Postgres::DDL.render_column(stripped, step.table_name)
                   else
                     raise Prostore::MigrationError.new("AddColumnNullable not implemented for adapter #{adapter.class}")
                   end
@@ -599,6 +601,101 @@ module Prostore
         rows = Drift::SchemaTable.all(adapter, executor)
         rows.find { |row| row.table_name == table && row.kind == kind && row.tag == tag } ||
           raise Prostore::MigrationError.new("Bookkeeping row missing for #{table}/#{kind}/tag=#{tag}")
+      end
+
+      # ---- AlterEnumMembers (ADR-0016) ------------------------------------
+      #
+      # Swap an enum column's CHECK constraint so the widened member set is
+      # accepted. The validator has already rejected removals/value changes,
+      # so the new CHECK is always at least as permissive as the old one.
+
+      private def run_alter_enum_members(adapter, executor, step : Kind::AlterEnumMembers) : Nil
+        case adapter
+        when Prostore::Adapter::SQLite::Adapter
+          alter_enum_members_sqlite(adapter, executor, step)
+        when Prostore::Adapter::Postgres::Adapter
+          alter_enum_members_postgres(adapter, executor, step)
+        else
+          raise Prostore::MigrationError.new(
+            "AlterEnumMembers not implemented for adapter #{adapter.class}"
+          )
+        end
+        Drift::SchemaTable.upsert_field(adapter, executor, step.table_name, step.field)
+      end
+
+      private def alter_enum_members_postgres(adapter, executor, step : Kind::AlterEnumMembers) : Nil
+        new_check = Prostore::Adapter::Postgres::DDL.render_enum_check(step.field, step.table_name) ||
+                    raise Prostore::MigrationError.new(
+                      "AlterEnumMembers: field #{step.field.name} carries no enum_members"
+                    )
+        # `CONSTRAINT name CHECK (...)` strips down to `ADD CONSTRAINT name CHECK (...)`.
+        # render_enum_check returns the full clause; we want everything after `CONSTRAINT`.
+        constraint_name = step.field.enum_check_constraint_name(step.table_name)
+        body_index = new_check.index(" CHECK (") ||
+                     raise Prostore::MigrationError.new("malformed CHECK clause from render_enum_check")
+        check_body = new_check[body_index + 1..]
+        qt = adapter.quote_ident(step.table_name)
+        qc = adapter.quote_ident(constraint_name)
+        executor.exec("ALTER TABLE #{qt} DROP CONSTRAINT IF EXISTS #{qc}")
+        executor.exec("ALTER TABLE #{qt} ADD CONSTRAINT #{qc} #{check_body}")
+      end
+
+      private def alter_enum_members_sqlite(adapter, executor, step : Kind::AlterEnumMembers) : Nil
+        live_table = adapter.introspect_table(step.table_name, executor)
+        target_column = step.field.name.to_s
+
+        col_defs = live_table.columns.map do |col|
+          if col.name == target_column
+            # The target column reuses the live attributes (type, primary,
+            # nullable, default) but replaces any prior CHECK with the new
+            # one derived from the desired field.
+            parts = [adapter.quote_ident(col.name), col.type_text] of String
+            if col.primary && col.auto_increment
+              parts << "PRIMARY KEY AUTOINCREMENT"
+            elsif col.primary
+              parts << "PRIMARY KEY"
+            end
+            parts << "NOT NULL" unless col.nullable
+            if d = col.default_text
+              parts << "DEFAULT #{d}"
+            end
+            if check = Prostore::Adapter::SQLite::DDL.render_enum_check(step.field, step.table_name)
+              parts << check
+            end
+            parts.join(' ')
+          else
+            parts = [adapter.quote_ident(col.name), col.type_text] of String
+            if col.primary && col.auto_increment
+              parts << "PRIMARY KEY AUTOINCREMENT"
+            elsif col.primary
+              parts << "PRIMARY KEY"
+            end
+            parts << "NOT NULL" unless col.nullable
+            if d = col.default_text
+              parts << "DEFAULT #{d}"
+            end
+            parts.join(' ')
+          end
+        end
+
+        fk_clauses = live_table.foreign_keys.map do |fk|
+          src_cols = fk.columns.map { |col| adapter.quote_ident(col) }.join(", ")
+          tgt_cols = fk.references_columns.map { |col| adapter.quote_ident(col) }.join(", ")
+          on_del = Prostore::Adapter::SQLite::DDL.render_action(fk.on_delete)
+          on_upd = Prostore::Adapter::SQLite::DDL.render_action(fk.on_update)
+          "FOREIGN KEY (#{src_cols}) REFERENCES #{adapter.quote_ident(fk.references_table)} (#{tgt_cols}) " \
+          "ON DELETE #{on_del} ON UPDATE #{on_upd}"
+        end
+
+        index_sql = Prostore::Adapter::SQLite::Rebuild.capture_index_statements(executor, step.table_name)
+        mapping = live_table.columns.map do |col|
+          {old_expr: adapter.quote_ident(col.name), new_name: col.name}
+        end
+
+        Prostore::Adapter::SQLite::Rebuild.rebuild(
+          adapter, executor, step.table_name,
+          col_defs, fk_clauses, mapping, index_sql,
+        )
       end
     end
   end

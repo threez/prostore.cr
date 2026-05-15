@@ -70,12 +70,21 @@ module Prostore
       # may have written explicit values to an auto_increment column.
       record ResetSequence, table_name : String, column_name : String
 
+      # Swap the CHECK constraint on an enum column to reflect a widened
+      # member set (ADR-0016). Postgres uses DROP CONSTRAINT … ADD CONSTRAINT
+      # in a single transaction; SQLite uses the table-rebuild dance. The
+      # `field` snapshot carries the final desired metadata (members, flags,
+      # portable type) so the executor can render the new CHECK and update
+      # the bookkeeping row.
+      record AlterEnumMembers, table_name : String, field : Schema::Field
+
       alias Any = CreateTable | DropTable |
                   AddColumn | DropColumn | RenameColumn |
                   AddIndex | DropIndex | RenameIndex |
                   AddColumnNullable | BackfillSqlExpr | BackfillCrystalLambda | ApplyNotNull |
                   AddForeignKey | DropForeignKey |
-                  ResetSequence
+                  ResetSequence |
+                  AlterEnumMembers
     end
 
     # Whether this step kind must run inside a transaction.

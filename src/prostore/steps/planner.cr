@@ -52,6 +52,8 @@ module Prostore
           steps << Kind::AddForeignKey.new(op.table_name, op.foreign_key)
         when Diff::Operation::DropForeignKey
           steps << Kind::DropForeignKey.new(op.table_name, op.tag, op.current_name)
+        when Diff::Operation::AlterEnumMembers
+          steps << Kind::AlterEnumMembers.new(op.table_name, op.field)
         end
       end
 

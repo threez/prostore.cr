@@ -77,6 +77,10 @@ module Prostore
           {kind: "reset_sequence", params: {
             table_name: step.table_name, column_name: step.column_name,
           }.to_json}
+        when Kind::AlterEnumMembers
+          {kind: "alter_enum_members", params: {
+            table_name: step.table_name, field: encode_field(step.field),
+          }.to_json}
         else
           raise Prostore::MigrationError.new("Unknown step kind: #{step.class}")
         end
@@ -121,6 +125,8 @@ module Prostore
           Kind::DropForeignKey.new(params["table_name"].as_s, params["tag"].as_i, params["constraint_name"].as_s)
         when "reset_sequence"
           Kind::ResetSequence.new(params["table_name"].as_s, params["column_name"].as_s)
+        when "alter_enum_members"
+          Kind::AlterEnumMembers.new(params["table_name"].as_s, decode_field(params["field"]))
         else
           raise Prostore::MigrationError.new("Unknown step kind on resume: #{kind}")
         end
@@ -142,10 +148,23 @@ module Prostore
           has_backfill:   f.has_backfill,
           backfill_sql:   f.backfill_sql,
           has_lazy:       f.has_lazy,
+          enum_members:   f.enum_members.try(&.map { |member| {name: member.name, value: member.value} }),
+          enum_is_flags:  f.enum_is_flags,
         }
       end
 
       def decode_field(j : JSON::Any) : Schema::Field
+        enum_members =
+          j["enum_members"]?.try do |raw|
+            arr = raw.as_a?
+            next nil if arr.nil?
+            arr.map do |entry|
+              Schema::EnumMember.new(
+                name: entry["name"].as_s,
+                value: entry["value"].as_i64,
+              )
+            end
+          end
         Schema::Field.new(
           tag: j["tag"].as_i,
           name: j["name"].as_s,
@@ -159,6 +178,8 @@ module Prostore
           has_backfill: j["has_backfill"].as_bool,
           backfill_sql: j["backfill_sql"]?.try(&.as_s?),
           has_lazy: j["has_lazy"].as_bool,
+          enum_members: enum_members,
+          enum_is_flags: j["enum_is_flags"]?.try(&.as_bool?) || false,
         )
       end
 

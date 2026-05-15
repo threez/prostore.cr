@@ -22,6 +22,11 @@ module Prostore
       record DropField, table_name : String, tag : Int32, current_name : String
       record RenameField, table_name : String, tag : Int32, from_name : String, to_name : String
 
+      # ADR-0016: enum member set has grown (additive change). The desired
+      # `field` snapshot carries the new member list; the executor swaps
+      # the CHECK constraint to widen the accepted value space.
+      record AlterEnumMembers, table_name : String, field : Schema::Field
+
       record AddIndex, table_name : String, index : Schema::Index
       record DropIndex, table_name : String, tag : Int32, current_name : String
       record RenameIndex, table_name : String, tag : Int32, from_name : String, to_name : String
@@ -30,7 +35,7 @@ module Prostore
       record DropForeignKey, table_name : String, tag : Int32, current_name : String
 
       alias Any = CreateTable | DropTable |
-                  AddField | DropField | RenameField |
+                  AddField | DropField | RenameField | AlterEnumMembers |
                   AddIndex | DropIndex | RenameIndex |
                   AddForeignKey | DropForeignKey
     end

@@ -148,6 +148,24 @@ module Prostore
             ops << Operation::RenameField.new(definition.table_name, tag, row.current_name, field.name.to_s)
           end
         end
+
+        # ADR-0016: enum member set has been extended (additive). The
+        # validator has already rejected removals and value changes; here we
+        # only emit a step when the desired set strictly contains members the
+        # stored set does not.
+        desired.each do |tag, field|
+          row = existing[tag]?
+          next unless row
+          desired_members = field.enum_members
+          next if desired_members.nil?
+          stored_members = row.enum_members || [] of Schema::EnumMember
+          added = desired_members.reject do |desired_member|
+            stored_members.any? { |stored_member| stored_member.name == desired_member.name }
+          end
+          if !added.empty?
+            ops << Operation::AlterEnumMembers.new(definition.table_name, field)
+          end
+        end
       end
 
       private def diff_indexes(definition : Schema::Definition,
