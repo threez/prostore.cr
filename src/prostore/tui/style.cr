@@ -55,6 +55,7 @@ module Prostore
                when "bytes"                         then "95" # bright magenta
                when "uuid"                          then "96" # bright cyan (IDs)
                when "json"                          then "93" # bright yellow
+               when "enum_string", "enum_int"       then "95" # bright magenta — categorical
                else                                      ""   # string, array_* → default
                end
         code.empty? ? s : "\e[#{code}m#{s}\e[0m"

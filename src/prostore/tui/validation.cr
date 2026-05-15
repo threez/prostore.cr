@@ -1,3 +1,5 @@
+require "big"
+
 module Prostore
   module TUI
     # Input validators used by the editor.  Pure functions over strings —
@@ -27,6 +29,33 @@ module Prostore
             false
           end
         end
+      end
+
+      # True if the input parses as a 64-bit signed integer.  Leading/trailing
+      # whitespace is tolerated; underscores and signs follow Crystal's
+      # `Int64.new` rules.
+      def self.valid_int?(s : String) : Bool
+        Int64.new(s.strip)
+        true
+      rescue
+        false
+      end
+
+      # True if the input parses as a 64-bit binary float.  Accepts scientific
+      # notation ("1e9") and signed values.
+      def self.valid_float?(s : String) : Bool
+        Float64.new(s.strip)
+        true
+      rescue
+        false
+      end
+
+      # True if the input parses as an arbitrary-precision decimal.
+      def self.valid_decimal?(s : String) : Bool
+        BigDecimal.new(s.strip)
+        true
+      rescue
+        false
       end
     end
   end

@@ -64,7 +64,7 @@ Navigation mode — the cursor is on a field row, no editor is open.
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move between fields |
-| `e` | Open the editor for the focused field (text editor or bool toggle) |
+| `e` | Open the editor for the focused field (text editor, bool toggle, enum picker, or flags checkbox — selected by field type) |
 | `r` | Clear the focused field to NULL (shown only on nullable, non-PK fields) |
 | `f` | Follow FK to referenced record (FK fields only) |
 | `Tab` | Browse the referenced table to pick a value (single-column FK fields only) |
@@ -91,8 +91,11 @@ prefixed with a red `!`.
 | `Esc` | Commit the edit buffer to the in-memory row (does not persist — press `s`) |
 
 Empty commit on a nullable column stores `nil` (SQL `NULL`), not `""`.
-Time-typed fields are validated on commit; invalid input sets a field error
-visible in the status bar and as the red `!` marker.
+Time-typed and numeric (`int32`, `int64`, `float32`, `float64`, `decimal`)
+fields are validated on commit; invalid input sets a field error visible in
+the status bar and as the red `!` marker. The text editor is only used for
+fields without a more specific editor — bool, enum, and flags fields skip
+it entirely.
 
 #### Bool toggle — when `e` opens a bool field
 
@@ -104,6 +107,41 @@ visible in the status bar and as the red `!` marker.
 
 The toggle only sets `true` / `false`. To set a nullable bool to NULL,
 press `r` in nav mode instead.
+
+#### Enum picker — when `e` opens a plain (non-flags) enum field
+
+Vertical radio list of every declared member; `▸` marks the focused option
+and `◉` / `○` mark selected / unselected.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move the focused option |
+| `Enter` / `Space` | Select the focused option, commit, and close the picker |
+| `Esc` | Cancel without changing the field |
+
+For `enum_string` columns, the selected member's name is stored verbatim
+("Active"); for `enum_int` columns, the underlying integer is stored. The
+non-editing display always shows the member name — `enum_int` values are
+looked up by integer and rendered as the name so the row reads as
+"Silver", not "5".
+
+#### Flags picker — when `e` opens a `@[Flags]` enum field
+
+Vertical checkbox list; `▸` marks the focused option and `[x]` / `[ ]` mark
+selected / unselected members. The composed value is the bitwise OR of the
+checked members' underlying ints.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move the focused option |
+| `Space` | Toggle the focused option |
+| `Enter` | Commit the composed value and close the picker |
+| `Esc` | Cancel without changing the field |
+
+Zero-valued members (e.g. an explicit `None = 0`) are intentionally
+omitted from the initial-selection decoder — they would otherwise appear
+checked for every mask and obscure the meaningful selection. Non-editing
+display decomposes the stored mask as e.g. `Read | Write`.
 
 #### FK picker — when `Tab` is pressed on a single-column FK field
 
@@ -135,8 +173,8 @@ prostore browse  (src/prostore_cli.cr → Prostore::TUI::App.run)
 Cross-cutting modules:
 
 - `Style` — prostore-domain colours and ornaments (FK, error, wrap_cont, bool badge, type colours).
-- `ColumnTypes` — pure type detection (`bool?`, `time?`, `searchable_text?`) over portable type + SQL type_text.
-- `Validation` — input validators (time formats).
+- `ColumnTypes` — pure type detection (`bool?`, `time?`, `enum?`, `int?`, `float?`, `decimal?`, `numeric?`, `searchable_text?`) over portable type + SQL type_text.
+- `Validation` — input validators (`valid_time?`, `valid_int?`, `valid_float?`, `valid_decimal?`).
 - `Term` — generic terminal infrastructure (raw mode, ANSI, fit/trunc/strip_ansi); no prostore knowledge.
 
 ### Navigation stack
@@ -169,8 +207,8 @@ Widgets must NOT draw their own hint lines.
 | `browser.cr` | `Browser` | All database I/O: schema, rows, CRUD, portable type lookup |
 | `term.cr` | `Term` | Terminal infrastructure: raw mode, ANSI, cursor, box chars, generic `fit`/`trunc`/`strip_ansi` |
 | `style.cr` | `Style` | App-level theme: FK colour, error colour, soft-wrap marker, bool badge, type-aware value colouring |
-| `column_types.cr` | `ColumnTypes` | Pure type detection: `bool?` / `time?` over portable type + SQL type_text; bool truthiness and display |
-| `validation.cr` | `Validation` | Input validators (time formats, `valid_time?`) |
+| `column_types.cr` | `ColumnTypes` | Pure type detection: `bool?` / `time?` / `enum?` / `int?` / `float?` / `decimal?` / `numeric?` over portable type + SQL type_text; bool truthiness and display |
+| `validation.cr` | `Validation` | Input validators: `valid_time?`, `valid_int?`, `valid_float?`, `valid_decimal?` |
 | `screen.cr` | `Screen` | Buffered output, cursor positioning, box drawing |
 | `keys.cr` | `Keys`, `Key`, `KeyEvent` | Raw byte → key-event parsing, escape sequence decoding |
 | `widget.cr` | `Widget` | Abstract base: position, focus, `render`/`handle_key` contract |
@@ -204,6 +242,7 @@ browser.fetch_rows("users", 50, 0, filter)        # => filtered page
 browser.fetch_row("users", "id", "1")             # => Hash(String, RowVal)?
 browser.pk_col("users")                           # => "id"
 browser.portable_types("users")                   # => {"id" => "int64", ...}
+browser.enum_columns("users")                     # => {"status" => EnumColumn{members: [...], is_flags: false}, ...}
 
 browser.insert_row("users", {"name" => "Alice", "email" => nil})  # nil → NULL
 browser.update_cell("users", "id", "1", "name", "Bob")
@@ -226,6 +265,11 @@ the term wrapped as `%term%`. The operator comes from
 prostore migrations). It returns an empty hash for databases not managed by prostore;
 callers fall back to SQL `type_text` inference in that case.
 
+`enum_columns` reads the typed `enum_members` / `enum_is_flags` columns from
+the same bookkeeping table (ADR-0016). Only columns whose portable type is
+`enum_string` or `enum_int` appear in the result. Empty hash for unmanaged
+databases — `RecordDetail` falls back to text editing for those columns.
+
 ### Colour palette
 
 Data-type colours (foreground, applied to cell values):
@@ -237,6 +281,7 @@ Data-type colours (foreground, applied to cell values):
 | `bool` (detail view fallback) | `BOOL` | bright green |
 | `time` | `DATE`, `TIME`, `STAMP` | bright blue |
 | `bytes` | `BLOB`, `BINARY` | bright magenta |
+| `enum_string`, `enum_int` | — (prostore-only) | bright magenta |
 | `string`, `array_*` | `TEXT`, `VARCHAR` | no colour |
 | `NULL` | — | dim `(null)` |
 
@@ -280,13 +325,18 @@ cursor field visible when the total content exceeds the available height.
 #### Editor state
 
 ```crystal
-@edit_lines    : Array(String)         # lines of the field being edited
-@edit_row      : Int32                 # cursor line within @edit_lines
-@edit_col      : Int32                 # cursor column within current line
-@bool_editing  : Bool                  # bool-toggle is open instead of the text editor
-@bool_pending  : Bool                  # pending toggle value
-@dirty         : Set(String)           # column names mutated since last reload
-@field_errors  : Hash(String, String)  # column → validation error message
+@edit_lines         : Array(String)         # lines of the field being edited
+@edit_row           : Int32                 # cursor line within @edit_lines
+@edit_col           : Int32                 # cursor column within current line
+@bool_editing       : Bool                  # bool-toggle is open
+@bool_pending       : Bool                  # pending toggle value
+@enum_editing       : Bool                  # plain-enum radio picker is open
+@enum_pending_index : Int32                 # selected member index for the radio picker
+@enum_focus         : Int32                 # focused member index in either enum picker
+@flags_editing      : Bool                  # @[Flags] checkbox picker is open
+@flags_pending      : Set(Int32)            # selected member indices for the checkbox picker
+@dirty              : Set(String)           # column names mutated since last reload
+@field_errors       : Hash(String, String)  # column → validation error message
 ```
 
 #### Commit semantics
@@ -298,12 +348,16 @@ cursor field visible when the total content exceeds the available height.
 - `r` in nav mode is a one-keystroke shortcut for the same outcome on
   nullable, non-PK columns.
 - Primary key columns cannot be edited on existing records.
-- Time-typed commits run `Validation.valid_time?`; a failure populates
-  `@field_errors[col]` and surfaces in the status bar and as a red `!`.
-  Re-editing a field clears its existing error so the indicator reflects
-  the latest commit only.
-- `commit_edit`, `commit_bool_edit`, `remove_value`, and the FK picker's
-  `set_row_value` all mark `@dirty`, which renders the column name bold.
+- Time, integer, float, and decimal commits run their respective
+  `Validation` helpers; failure populates `@field_errors[col]` and surfaces
+  in the status bar and as a red `!`. Re-editing a field clears its
+  existing error so the indicator reflects the latest commit only.
+- Enum / flags pickers do not need validation — the picker is constrained
+  to declared members. Committing always clears any prior error on that
+  field.
+- `commit_edit`, `commit_bool_edit`, `commit_enum_edit`, `commit_flags_edit`,
+  `remove_value`, and the FK picker's `set_row_value` all mark `@dirty`,
+  which renders the column name bold.
 - `reload` (after `s` or when reopening the record) clears `@dirty` and
   `@field_errors`.
 

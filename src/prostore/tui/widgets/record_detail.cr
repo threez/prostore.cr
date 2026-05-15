@@ -19,6 +19,7 @@ module Prostore
         @row = {} of String => RowVal
         @schema = @browser.schema(@table)
         @portable_types = @browser.portable_types(@table)
+        @enum_columns = @browser.enum_columns(@table)
         @cursor = 0       # focused field index
         @field_scroll = 0 # display-row offset for the field list
         @editing = false
@@ -27,6 +28,11 @@ module Prostore
         @edit_col = 0 # cursor column within current line
         @bool_editing = false
         @bool_pending = false
+        @enum_editing = false           # radio picker for plain enums
+        @enum_pending_index = 0         # which member is currently selected
+        @enum_focus = 0                 # which member the cursor is highlighting
+        @flags_editing = false          # checkbox picker for @[Flags] enums
+        @flags_pending = Set(Int32).new # indices of currently-selected members
         @field_errors = {} of String => String
         @dirty = Set(String).new # column names mutated since last load
         @is_new = false
@@ -109,7 +115,7 @@ module Prostore
             val_display = Term.fit(line_content, val_w - Term.visible_size(pk_tag) - Term.visible_size(fk_label))
             line = "#{label} #{val_display}#{pk_tag}#{fk_label}"
 
-            if fi == @cursor && !@editing && !@bool_editing
+            if fi == @cursor && !@editing && !@bool_editing && !@enum_editing && !@flags_editing
               # Strip inner ANSI before applying reverse — otherwise the first
               # `\e[0m` from a colour segment cancels the reverse video mid-row.
               plain = Term.fit(Term.strip_ansi(line), inner_w)
@@ -125,6 +131,10 @@ module Prostore
       def handle_key(ev : KeyEvent) : Bool
         if @bool_editing
           handle_bool_edit_key(ev)
+        elsif @enum_editing
+          handle_enum_edit_key(ev)
+        elsif @flags_editing
+          handle_flags_edit_key(ev)
         elsif @editing
           handle_edit_key(ev)
         else
@@ -154,6 +164,76 @@ module Prostore
           case ev.char
           when ' '
             @bool_pending = !@bool_pending
+            true
+          else
+            false
+          end
+        else
+          false
+        end
+      end
+
+      # Radio picker for plain (non-flags) enums.  ↑/↓ moves the focused
+      # member, Space/Enter selects it and commits, Esc cancels without
+      # writing back.
+      private def handle_enum_edit_key(ev : KeyEvent) : Bool
+        info = current_enum_info
+        return false if info.nil?
+        case ev.key
+        when Key::Esc
+          cancel_enum_edit
+          true
+        when Key::Enter
+          @enum_pending_index = @enum_focus
+          commit_enum_edit
+          true
+        when Key::Up
+          @enum_focus = (@enum_focus - 1).clamp(0, info.members.size - 1)
+          true
+        when Key::Down
+          @enum_focus = (@enum_focus + 1).clamp(0, info.members.size - 1)
+          true
+        when Key::Char
+          case ev.char
+          when ' '
+            @enum_pending_index = @enum_focus
+            commit_enum_edit
+            true
+          else
+            false
+          end
+        else
+          false
+        end
+      end
+
+      # Checkbox picker for @[Flags] enums.  ↑/↓ moves the focused member,
+      # Space toggles its membership in the pending set, Enter commits the
+      # bitwise OR, Esc cancels.
+      private def handle_flags_edit_key(ev : KeyEvent) : Bool
+        info = current_enum_info
+        return false if info.nil?
+        case ev.key
+        when Key::Esc
+          cancel_flags_edit
+          true
+        when Key::Enter
+          commit_flags_edit
+          true
+        when Key::Up
+          @enum_focus = (@enum_focus - 1).clamp(0, info.members.size - 1)
+          true
+        when Key::Down
+          @enum_focus = (@enum_focus + 1).clamp(0, info.members.size - 1)
+          true
+        when Key::Char
+          case ev.char
+          when ' '
+            if @flags_pending.includes?(@enum_focus)
+              @flags_pending.delete(@enum_focus)
+            else
+              @flags_pending << @enum_focus
+            end
             true
           else
             false
@@ -276,7 +356,18 @@ module Prostore
         return unless col
         return if col.primary && !@is_new
         @field_errors.delete(col.name)
-        if ColumnTypes.bool?(@portable_types[col.name]?, col.type_text)
+        if info = @enum_columns[col.name]?
+          if info.is_flags
+            @flags_pending = decode_flags_indices(@row[col.name]?, info)
+            @enum_focus = 0
+            @flags_editing = true
+          else
+            @enum_pending_index = decode_enum_index(@row[col.name]?, info,
+              @portable_types[col.name]?)
+            @enum_focus = @enum_pending_index
+            @enum_editing = true
+          end
+        elsif ColumnTypes.bool?(@portable_types[col.name]?, col.type_text)
           @bool_pending = ColumnTypes.bool_truthy?(@row[col.name]?)
           @bool_editing = true
         else
@@ -299,19 +390,42 @@ module Prostore
         # and the display would lose the (null) marker.
         @row[col.name] = (value.empty? && col.nullable) ? nil : value
         @dirty << col.name
-        if ColumnTypes.time?(@portable_types[col.name]?, col.type_text) && !value.strip.empty?
-          if Validation.valid_time?(value)
-            @field_errors.delete(col.name)
-          else
-            @field_errors[col.name] = "invalid time — expected YYYY-MM-DD HH:MM:SS"
-          end
-        else
-          @field_errors.delete(col.name)
-        end
+        validate_edit(col, value)
         @editing = false
         @edit_lines.clear
         @edit_row = 0
         @edit_col = 0
+      end
+
+      # Run portable-type-driven validation on the just-committed value and
+      # record an inline error if it fails. Empty values are never flagged —
+      # nullability is the column-level constraint that handles those.
+      private def validate_edit(col : Adapter::LiveColumn, value : String) : Nil
+        pt = @portable_types[col.name]?
+        if value.strip.empty?
+          @field_errors.delete(col.name)
+          return
+        end
+        if ColumnTypes.time?(pt, col.type_text)
+          set_error(col, Validation.valid_time?(value),
+            "invalid time — expected YYYY-MM-DD HH:MM:SS")
+        elsif ColumnTypes.int?(pt, col.type_text)
+          set_error(col, Validation.valid_int?(value), "invalid integer")
+        elsif ColumnTypes.float?(pt, col.type_text)
+          set_error(col, Validation.valid_float?(value), "invalid number")
+        elsif ColumnTypes.decimal?(pt, col.type_text)
+          set_error(col, Validation.valid_decimal?(value), "invalid decimal")
+        else
+          @field_errors.delete(col.name)
+        end
+      end
+
+      private def set_error(col : Adapter::LiveColumn, ok : Bool, msg : String) : Nil
+        if ok
+          @field_errors.delete(col.name)
+        else
+          @field_errors[col.name] = msg
+        end
       end
 
       private def commit_bool_edit : Nil
@@ -320,6 +434,83 @@ module Prostore
         @row[col.name] = @bool_pending ? "true" : "false"
         @dirty << col.name
         @bool_editing = false
+      end
+
+      private def commit_enum_edit : Nil
+        col = current_col
+        return unless col
+        info = @enum_columns[col.name]?
+        return unless info
+        member = info.members[@enum_pending_index]?
+        return unless member
+        pt = @portable_types[col.name]?
+        @row[col.name] = (pt == "enum_int") ? member.value.to_s : member.name
+        @dirty << col.name
+        @field_errors.delete(col.name)
+        @enum_editing = false
+      end
+
+      private def cancel_enum_edit : Nil
+        @enum_editing = false
+      end
+
+      private def commit_flags_edit : Nil
+        col = current_col
+        return unless col
+        info = @enum_columns[col.name]?
+        return unless info
+        composed = 0_i64
+        @flags_pending.each do |i|
+          member = info.members[i]?
+          composed |= member.value if member
+        end
+        @row[col.name] = composed.to_s
+        @dirty << col.name
+        @field_errors.delete(col.name)
+        @flags_editing = false
+      end
+
+      private def cancel_flags_edit : Nil
+        @flags_editing = false
+      end
+
+      private def current_enum_info : Browser::EnumColumn?
+        col = current_col
+        col ? @enum_columns[col.name]? : nil
+      end
+
+      # Find the member index that matches the stored raw value.
+      # For `enum_string` we compare by member name; for `enum_int` by the
+      # underlying integer. Returns 0 on no match so the picker always lands
+      # on a defined member rather than a phantom index.
+      private def decode_enum_index(raw : String?, info : Browser::EnumColumn,
+                                    portable_type : String?) : Int32
+        return 0 if raw.nil?
+        if portable_type == "enum_int"
+          parsed = raw.to_i64?
+          return 0 if parsed.nil?
+          idx = info.members.index { |member| member.value == parsed }
+          idx || 0
+        else
+          idx = info.members.index { |member| member.name == raw }
+          idx || 0
+        end
+      end
+
+      # For a stored bitmask, return the indices of members whose underlying
+      # value is fully contained in the mask (`(mask & m.value) == m.value`).
+      # Zero-valued members (e.g. `None = 0`) are intentionally excluded —
+      # they would otherwise match every mask and lead to confusing UI.
+      private def decode_flags_indices(raw : String?, info : Browser::EnumColumn) : Set(Int32)
+        result = Set(Int32).new
+        return result if raw.nil?
+        mask = raw.to_i64?
+        return result if mask.nil?
+        info.members.each_with_index do |member, index|
+          next if member.value == 0
+          result << index if (mask & member.value) == member.value
+        end
+        result
       end
 
       private def cancel_edit : Nil
@@ -412,6 +603,9 @@ module Prostore
         vw = compute_val_w
         if @bool_editing && fi == @cursor
           1
+        elsif (@enum_editing || @flags_editing) && fi == @cursor
+          info = @enum_columns[col.name]?
+          info ? [info.members.size, 1].max : 1
         elsif @editing && fi == @cursor
           count = @edit_lines.each_with_index.sum do |text, li|
             soft_wrap(li == @edit_row ? text + "█" : text, vw).size
@@ -427,45 +621,104 @@ module Prostore
       # Long logical lines are soft-wrapped; non-final segments end with Term.wrap_cont.
       private def field_lines(col : Adapter::LiveColumn, fi : Int32) : Array(String)
         if @bool_editing && fi == @cursor
-          yes_part = @bool_pending ? "◉ yes" : "○ yes"
-          no_part = @bool_pending ? "○ no" : "◉ no"
-          ["#{yes_part}   #{no_part}"]
+          bool_picker_lines
+        elsif @enum_editing && fi == @cursor
+          enum_picker_lines(col, radio: true)
+        elsif @flags_editing && fi == @cursor
+          enum_picker_lines(col, radio: false)
         elsif @editing && fi == @cursor
-          vw = compute_val_w
-          result = [] of String
-          @edit_lines.each_with_index do |text, li|
-            full = if li == @edit_row
-                     left = text[0...@edit_col]
-                     right = text[@edit_col..]? || ""
-                     "#{left}█#{right}"
-                   else
-                     text
-                   end
-            segs = soft_wrap(full, vw)
-            segs.each_with_index do |seg, si|
-              result << (si < segs.size - 1 ? seg + Style.wrap_cont : seg)
-            end
-          end
-          result
+          editor_lines
         else
-          val = @row[col.name]?
-          if val.nil?
-            [Term.dim("(null)")]
-          else
-            vw = compute_val_w
-            pt = @portable_types[col.name]?
-            has_error = @field_errors.has_key?(col.name)
-            display = ColumnTypes.bool?(pt, col.type_text) ? ColumnTypes.bool_display(val) : val
-            result = [] of String
-            display.split('\n').each do |ln|
-              segs = soft_wrap(ln, vw)
-              segs.each_with_index do |seg, si|
-                colored = has_error ? Style.error(seg) : Style.value(pt, col.type_text, seg)
-                result << (si < segs.size - 1 ? colored + Style.wrap_cont : colored)
-              end
-            end
-            result
+          display_lines(col)
+        end
+      end
+
+      private def bool_picker_lines : Array(String)
+        yes_part = @bool_pending ? "◉ yes" : "○ yes"
+        no_part = @bool_pending ? "○ no" : "◉ no"
+        ["#{yes_part}   #{no_part}"]
+      end
+
+      # Render the vertical picker for either the enum radio (`radio: true`)
+      # or the flags checkbox (`radio: false`). Both share layout — the only
+      # difference is the marker glyph and which set drives the highlight.
+      private def enum_picker_lines(col : Adapter::LiveColumn, radio : Bool) : Array(String)
+        info = @enum_columns[col.name]?
+        return [Term.dim("(no members)")] if info.nil? || info.members.empty?
+        info.members.map_with_index do |member, index|
+          pointer = (index == @enum_focus) ? "▸" : " "
+          marker = if radio
+                     (index == @enum_pending_index) ? "◉" : "○"
+                   else
+                     @flags_pending.includes?(index) ? "[x]" : "[ ]"
+                   end
+          "#{pointer} #{marker} #{member.name}"
+        end
+      end
+
+      private def editor_lines : Array(String)
+        vw = compute_val_w
+        result = [] of String
+        @edit_lines.each_with_index do |text, li|
+          full = if li == @edit_row
+                   left = text[0...@edit_col]
+                   right = text[@edit_col..]? || ""
+                   "#{left}█#{right}"
+                 else
+                   text
+                 end
+          segs = soft_wrap(full, vw)
+          segs.each_with_index do |seg, si|
+            result << (si < segs.size - 1 ? seg + Style.wrap_cont : seg)
           end
+        end
+        result
+      end
+
+      private def display_lines(col : Adapter::LiveColumn) : Array(String)
+        val = @row[col.name]?
+        return [Term.dim("(null)")] if val.nil?
+        vw = compute_val_w
+        pt = @portable_types[col.name]?
+        has_error = @field_errors.has_key?(col.name)
+        display = format_value(col, pt, val)
+        result = [] of String
+        display.split('\n').each do |ln|
+          segs = soft_wrap(ln, vw)
+          segs.each_with_index do |seg, si|
+            colored = has_error ? Style.error(seg) : Style.value(pt, col.type_text, seg)
+            result << (si < segs.size - 1 ? colored + Style.wrap_cont : colored)
+          end
+        end
+        result
+      end
+
+      # Translate the raw stored string into the user-facing display form.
+      # Most columns pass through as-is; the cases we sweeten:
+      #   - bool   →  "yes" / "no"
+      #   - enum_int (plain)  →  member name (raw int is unreadable)
+      #   - enum_int (@[Flags]) →  "Read | Write" decomposition
+      # The chosen forms are *display only*; storage and edit start values
+      # always remain the raw stringified int / member name.
+      private def format_value(col : Adapter::LiveColumn, pt : String?, val : String) : String
+        return ColumnTypes.bool_display(val) if ColumnTypes.bool?(pt, col.type_text)
+        info = @enum_columns[col.name]?
+        return val if info.nil?
+        if info.is_flags
+          mask = val.to_i64?
+          return val if mask.nil?
+          names = info.members.compact_map do |member|
+            next nil if member.value == 0
+            ((mask & member.value) == member.value) ? member.name : nil
+          end
+          names.empty? ? val : names.join(" | ")
+        elsif pt == "enum_int"
+          parsed = val.to_i64?
+          return val if parsed.nil?
+          match = info.members.find { |member| member.value == parsed }
+          match ? match.name : val
+        else
+          val
         end
       end
 
@@ -473,23 +726,42 @@ module Prostore
       # bindings reachable from the current state are listed here so the user
       # doesn't have to look in two places.
       def status_hint : String
-        err = !@bool_editing && !@editing ? current_col.try { |col| @field_errors[col.name]? } : nil
+        picker_hint = picker_status_hint
+        return picker_hint if picker_hint
         cur_col = current_col
         cur_fk = cur_col.try { |col| fk_for_col(col.name) }
-        rm_part = (cur_col && cur_col.nullable && !(cur_col.primary && !@is_new)) ? "  r:remove" : ""
+        if @editing
+          editor_status_hint(cur_fk)
+        else
+          nav_status_hint(cur_col, cur_fk)
+        end
+      end
+
+      private def picker_status_hint : String?
         if @bool_editing
           " ←→/Space:toggle  Enter/Esc:done"
-        elsif @editing
-          tab_part = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
-          " ↑↓←→:cursor  Enter:newline#{tab_part}  Esc:done"
-        elsif err
-          " ✕ #{err}"
-        elsif @is_new
-          tab_part = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
-          " ↑↓:field  e:edit#{rm_part}#{tab_part}  s:insert  Esc:back"
+        elsif @enum_editing
+          " ↑↓:choose  Enter/Space:select  Esc:cancel"
+        elsif @flags_editing
+          " ↑↓:move  Space:toggle  Enter:done  Esc:cancel"
+        end
+      end
+
+      private def editor_status_hint(cur_fk : Adapter::LiveForeignKey?) : String
+        tab_part = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
+        " ↑↓←→:cursor  Enter:newline#{tab_part}  Esc:done"
+      end
+
+      private def nav_status_hint(cur_col : Adapter::LiveColumn?,
+                                  cur_fk : Adapter::LiveForeignKey?) : String
+        err = cur_col.try { |col| @field_errors[col.name]? }
+        return " ✕ #{err}" if err
+        rm_part = (cur_col && cur_col.nullable && !(cur_col.primary && !@is_new)) ? "  r:remove" : ""
+        fk_tab = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
+        if @is_new
+          " ↑↓:field  e:edit#{rm_part}#{fk_tab}  s:insert  Esc:back"
         else
           fk_follow = cur_fk ? "  f:follow-fk" : ""
-          fk_tab = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
           " ↑↓:field  e:edit#{rm_part}#{fk_follow}#{fk_tab}  s:save  d:delete  Esc:back"
         end
       end

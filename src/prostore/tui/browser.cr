@@ -2,6 +2,8 @@ require "db"
 require "../connection"
 require "../adapter/live_state"
 require "../migration/bookkeeping"
+require "../drift/schema_table"
+require "../schema/enum_member"
 
 module Prostore
   module TUI
@@ -16,6 +18,13 @@ module Prostore
     # Held as plain values so Browser can compose them into both COUNT and
     # SELECT statements while still using parameterised placeholders.
     record Filter, term : String, columns : Array(String)
+
+    # Enum metadata for a single column, surfaced from the bookkeeping table
+    # so the TUI can render value pickers (radio for plain enums, checkbox
+    # for `@[Flags]`).
+    record EnumColumn,
+      members : Array(Schema::EnumMember),
+      is_flags : Bool
 
     class Browser
       def initialize(@conn : Connection)
@@ -153,6 +162,31 @@ module Prostore
         result
       rescue
         {} of String => String
+      end
+
+      # Returns enum metadata keyed by column name, for columns whose portable
+      # type is `enum_string` or `enum_int`. Columns without enum metadata are
+      # omitted. Returns an empty hash if the bookkeeping table doesn't exist
+      # (database not managed by prostore). Reuses the typed `SchemaTable`
+      # reader so the JSON-decoded `enum_members` array is honoured exactly
+      # as written by the migration runner.
+      def enum_columns(table : String) : Hash(String, EnumColumn)
+        result = {} of String => EnumColumn
+        @conn.with_connection do |db_conn|
+          rows = Drift::SchemaTable.for_table(@conn.adapter, db_conn, table)
+          rows.each do |row|
+            next unless row.kind == Drift::SchemaTable::KIND_COLUMN
+            members = row.enum_members
+            next if members.nil?
+            result[row.current_name] = EnumColumn.new(
+              members: members,
+              is_flags: row.enum_is_flags || false,
+            )
+          end
+        end
+        result
+      rescue
+        {} of String => EnumColumn
       end
 
       # Builds the ` WHERE …` fragment (leading space included) and the
