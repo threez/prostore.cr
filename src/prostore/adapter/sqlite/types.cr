@@ -24,6 +24,9 @@ module Prostore
       def self.affinity(portable : String) : String
         # Array tags collapse to TEXT (JSON-encoded) on SQLite.
         return "TEXT" if portable.starts_with?("array_")
+        # Enum tags: enum_string → TEXT (member name), enum_int → INTEGER.
+        return "TEXT" if portable == "enum_string"
+        return "INTEGER" if portable == "enum_int"
         AFFINITY[portable]? ||
           raise Prostore::SchemaError.new("No SQLite affinity for portable type #{portable}")
       end

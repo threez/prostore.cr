@@ -21,6 +21,13 @@ module Prostore
         # (e.g. INTEGER[]) are deferred — JSONB gives us a uniform IO path
         # at the cost of native array indexing.
         return "JSONB" if portable.starts_with?("array_")
+        # Enum tags: enum_string stores the member name as TEXT; enum_int
+        # stores the Int64-promoted underlying value as BIGINT. Native PG
+        # `CREATE TYPE ... AS ENUM` is intentionally not used (ADR-0016)
+        # because there is no SQLite analog and it adds type-management
+        # complexity beyond the column lifecycle.
+        return "TEXT" if portable == "enum_string"
+        return "BIGINT" if portable == "enum_int"
         MAPPING[portable]? ||
           raise Prostore::SchemaError.new("No PostgreSQL type for portable '#{portable}'")
       end
