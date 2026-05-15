@@ -136,11 +136,23 @@ class Prostore::Model
       end
 
       # Scalar literals (Bool, Number, String) are auto-wrapped in their SQL
-      # equivalents. Symbol literals are emitted verbatim as SQL keywords /
-      # function calls (:CURRENT_TIMESTAMP → CURRENT_TIMESTAMP).
-      # SQL.expr("...") and Crystal lambdas are also accepted.
+      # equivalents and *also* captured as Crystal values so the ORM seeds
+      # `@field` on save when the user hasn't touched it (ADR-0011 mechanism
+      # 2, new-row half; covers the `.new + .save` flow that the DDL DEFAULT
+      # alone misses because the macro always emits the column in the INSERT
+      # column list). Symbol literals are emitted verbatim as SQL keywords /
+      # function calls (:CURRENT_TIMESTAMP → CURRENT_TIMESTAMP) — those have
+      # no Crystal-side value and remain DB-side only. SQL.expr("...") and
+      # Crystal lambdas are also accepted.
       default_sql = nil
+      default_value = nil
       if has_default
+        if opts[:default].is_a?(BoolLiteral) ||
+           opts[:default].is_a?(NumberLiteral) ||
+           opts[:default].is_a?(StringLiteral)
+          default_value = opts[:default]
+        end
+
         if opts[:default].is_a?(BoolLiteral)
           default_sql = opts[:default].id.stringify
         elsif opts[:default].is_a?(NumberLiteral)
@@ -215,6 +227,7 @@ class Prostore::Model
         auto_increment:  auto_increment,
         has_default:     has_default,
         default_sql:     default_sql,
+        default_value:   default_value,
         has_backfill:    has_backfill,
         backfill_sql:    backfill_sql,
         has_lazy:        has_lazy,

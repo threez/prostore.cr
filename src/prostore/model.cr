@@ -437,8 +437,9 @@ module Prostore
               if !@__prostore_persisted
                 # Evaluate Crystal-lambda defaults for any field that's
                 # still unset at INSERT time (ADR-0004 / ADR-0011 mechanism 2,
-                # new-row half). SQL.expr defaults are applied by the DB via
-                # the column DEFAULT clause; lambda defaults run here.
+                # new-row half). SQL.expr / symbol defaults are applied by
+                # the DB via the column DEFAULT clause; lambda defaults run
+                # here.
                 {% for f in @type.constant("FIELDS") %}
                   {% if f[:default_lambda] %}
                     if @{{ f[:name].id }}.nil?
@@ -448,6 +449,19 @@ module Prostore
                         @{{ f[:name].id }} = ({{ f[:default_lambda] }}).call(self).as({{ f[:ruby_type] }})
                       {% end %}
                     end
+                  {% end %}
+                {% end %}
+
+                # Seed scalar-literal defaults (Bool / Number / String). These
+                # are also emitted into the DDL DEFAULT clause for raw-SQL
+                # inserts that bypass the ORM, but the macro always lists
+                # every non-PK column in the INSERT — without this step the
+                # DDL DEFAULT is shadowed by the explicit NULL we'd bind from
+                # the unset ivar. Mirrors the lambda block above: nil means
+                # "use the declared default".
+                {% for f in @type.constant("FIELDS") %}
+                  {% if f[:default_value] != nil %}
+                    @{{ f[:name].id }} = {{ f[:default_value] }} if @{{ f[:name].id }}.nil?
                   {% end %}
                 {% end %}
 
