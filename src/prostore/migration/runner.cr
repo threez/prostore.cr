@@ -10,6 +10,7 @@ require "../steps/planner"
 require "../steps/executor"
 require "../steps/codec"
 require "./bookkeeping"
+require "./internal"
 require "./state"
 require "./lease"
 
@@ -50,6 +51,11 @@ module Prostore
 
       def run : Nil
         @conn.with_connection do |db_conn|
+          # Evolve prostore's own bookkeeping schema first; for legacy
+          # installs this lifts `prostore_schema.definition` JSON into
+          # typed columns before the rest of the runner reads them.
+          Internal.run(@conn.adapter, db_conn)
+
           Bookkeeping.ensure_tables(@conn.adapter, db_conn)
 
           source_hash = compute_source_hash_internal(db_conn)
@@ -134,9 +140,56 @@ module Prostore
         io = IO::Memory.new
         io << "prostore-source\n"
         rows.sort_by { |row| {row.table_name, row.kind, row.tag} }.each do |row|
-          io << row.table_name << ':' << row.kind << ':' << row.tag << ':' << row.current_name << ':' << row.definition << '\n'
+          io << row.table_name << ':' << row.kind << ':' << row.tag << ':' << row.current_name << ':'
+          io << canonical_definition(row) << '\n'
         end
         Digest::SHA256.hexdigest(io.to_s)
+      end
+
+      # Deterministic per-kind serialization of a row's typed definition.
+      # Keys are emitted in a fixed order so the hash is stable across runs.
+      # NOTE: this is a content fingerprint, not the on-disk shape — the
+      # storage format moved from a single JSON blob (internal v1) to typed
+      # columns (v2), but the hash format is determined here.
+      private def canonical_definition(row : Drift::SchemaTable::Row) : String
+        case row.kind
+        when Drift::SchemaTable::KIND_COLUMN
+          String.build do |io|
+            io << "portable_type=" << row.portable_type
+            io << "|nullable=" << bool_canonical(row.nullable)
+            io << "|primary=" << bool_canonical(row.primary)
+            io << "|auto_increment=" << bool_canonical(row.auto_increment)
+            io << "|has_default=" << bool_canonical(row.has_default)
+            io << "|default_sql=" << row.default_sql.inspect
+            io << "|has_backfill=" << bool_canonical(row.has_backfill)
+            io << "|backfill_sql=" << row.backfill_sql.inspect
+            io << "|has_lazy=" << bool_canonical(row.has_lazy)
+          end
+        when Drift::SchemaTable::KIND_INDEX
+          String.build do |io|
+            io << "columns=" << (row.index_columns || [] of String).join(",")
+            io << "|unique=" << bool_canonical(row.index_unique)
+            io << "|where_sql=" << row.index_where_sql.inspect
+          end
+        when Drift::SchemaTable::KIND_FOREIGN_KEY
+          String.build do |io|
+            io << "columns=" << (row.fk_columns || [] of String).join(",")
+            io << "|references_table=" << row.fk_references_table
+            io << "|references_columns=" << (row.fk_references_columns || [] of String).join(",")
+            io << "|on_delete=" << row.fk_on_delete
+            io << "|on_update=" << row.fk_on_update
+          end
+        else
+          "kind=#{row.kind}"
+        end
+      end
+
+      private def bool_canonical(value : Bool?) : String
+        case value
+        when true  then "1"
+        when false then "0"
+        else            ""
+        end
       end
 
       private def compute_target_hash_internal : String

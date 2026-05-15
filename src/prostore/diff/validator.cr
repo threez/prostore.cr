@@ -1,4 +1,3 @@
-require "json"
 require "../drift/schema_table"
 require "../schema"
 
@@ -47,17 +46,15 @@ module Prostore
           row = existing[tag]?
           next unless row
 
-          stored = JSON.parse(row.definition)
-
-          if stored["portable_type"]?.try(&.as_s) != field.portable_type.to_s
+          if row.portable_type && row.portable_type != field.portable_type.to_s
             raise Prostore::SchemaError.new(
               "Field tag #{tag} on #{definition.table_name}: type changed from " \
-              "#{stored["portable_type"]?} to #{field.portable_type} — in-place type changes are " \
+              "#{row.portable_type} to #{field.portable_type} — in-place type changes are " \
               "forbidden (ADR-0003). Reserve the old tag and add a new field instead."
             )
           end
 
-          stored_nullable = stored["nullable"]?.try(&.as_bool)
+          stored_nullable = row.nullable
           if !stored_nullable.nil? && stored_nullable != field.nullable
             raise Prostore::SchemaError.new(
               "Field tag #{tag} on #{definition.table_name}: nullability changed " \
@@ -66,7 +63,7 @@ module Prostore
             )
           end
 
-          stored_primary = stored["primary"]?.try(&.as_bool)
+          stored_primary = row.primary
           if !stored_primary.nil? && stored_primary != field.primary
             raise Prostore::SchemaError.new(
               "Field tag #{tag} on #{definition.table_name}: primary-key flag changed — " \
@@ -74,7 +71,7 @@ module Prostore
             )
           end
 
-          stored_ai = stored["auto_increment"]?.try(&.as_bool)
+          stored_ai = row.auto_increment
           if !stored_ai.nil? && stored_ai != field.auto_increment
             raise Prostore::SchemaError.new(
               "Field tag #{tag} on #{definition.table_name}: auto_increment changed — " \
@@ -114,9 +111,8 @@ module Prostore
         desired.each do |tag, idx|
           row = existing[tag]?
           next unless row
-          stored = JSON.parse(row.definition)
 
-          stored_cols = stored["columns"]?.try(&.as_a.map(&.as_s)) || [] of String
+          stored_cols = row.index_columns || [] of String
           desired_cols = idx.columns.map(&.to_s)
           if stored_cols != desired_cols
             raise Prostore::SchemaError.new(
@@ -126,7 +122,7 @@ module Prostore
             )
           end
 
-          stored_unique = stored["unique"]?.try(&.as_bool)
+          stored_unique = row.index_unique
           if !stored_unique.nil? && stored_unique != idx.unique
             raise Prostore::SchemaError.new(
               "Index tag #{tag} on #{definition.table_name}: unique flag changed — " \
@@ -134,7 +130,7 @@ module Prostore
             )
           end
 
-          stored_where = stored["where_sql"]?.try(&.as_s?)
+          stored_where = row.index_where_sql
           if stored_where != idx.where_sql
             raise Prostore::SchemaError.new(
               "Index tag #{tag} on #{definition.table_name}: WHERE clause changed " \

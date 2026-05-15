@@ -5,25 +5,51 @@ require "../../spec_helper"
 private alias Row = Prostore::Drift::SchemaTable::Row
 
 private def column_row(table : String, tag : Int32, name : String, **attrs) : Row
-  default = {
+  defaults = {
     portable_type:  "string",
     nullable:       false,
     primary:        false,
     auto_increment: false,
     has_default:    false,
-    default_sql:    nil,
+    default_sql:    nil.as(String?),
     has_backfill:   false,
-    backfill_sql:   nil,
+    backfill_sql:   nil.as(String?),
     has_lazy:       false,
   }
-  merged = default.merge(attrs)
-  Row.new(table, "column", tag, name, merged.to_json)
+  merged = defaults.merge(attrs)
+  Row.new(
+    table_name: table,
+    kind: Prostore::Drift::SchemaTable::KIND_COLUMN,
+    tag: tag,
+    current_name: name,
+    portable_type: merged[:portable_type],
+    nullable: merged[:nullable],
+    primary: merged[:primary],
+    auto_increment: merged[:auto_increment],
+    has_default: merged[:has_default],
+    default_sql: merged[:default_sql],
+    has_backfill: merged[:has_backfill],
+    backfill_sql: merged[:backfill_sql],
+    has_lazy: merged[:has_lazy],
+  )
 end
 
 private def index_row(table : String, tag : Int32, name : String, **attrs) : Row
-  default = {columns: [] of String, unique: false, where_sql: nil}
-  merged = default.merge(attrs)
-  Row.new(table, "index", tag, name, merged.to_json)
+  defaults = {
+    columns:   [] of String,
+    unique:    false,
+    where_sql: nil.as(String?),
+  }
+  merged = defaults.merge(attrs)
+  Row.new(
+    table_name: table,
+    kind: Prostore::Drift::SchemaTable::KIND_INDEX,
+    tag: tag,
+    current_name: name,
+    index_columns: merged[:columns],
+    index_unique: merged[:unique],
+    index_where_sql: merged[:where_sql],
+  )
 end
 
 private class TypeChangeBefore < Prostore::Model

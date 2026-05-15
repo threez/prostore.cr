@@ -1,4 +1,3 @@
-require "json"
 require "../adapter/base"
 require "../adapter/live_state"
 require "../diff/operation"
@@ -89,8 +88,7 @@ module Prostore
           end
 
           # Validate definition compatibility.
-          stored = JSON.parse(row.definition)
-          stored_nullable = stored["nullable"]?.try(&.as_bool) || false
+          stored_nullable = row.nullable || false
           if live_col.nullable != stored_nullable
             raise Prostore::DriftError.new(
               "Managed column #{table}.#{row.current_name} has nullability changed " \
@@ -115,21 +113,18 @@ module Prostore
 
           if live_idx.nil?
             # Managed index disappeared from live state. Recreate.
-            stored = JSON.parse(row.definition)
-            cols = stored["columns"]?.try(&.as_a.map(&.as_s)) || [] of String
-            unique = stored["unique"]?.try(&.as_bool) || false
-            where_sql = stored["where_sql"]?.try(&.as_s?)
             recreated = Schema::Index.new(
               tag: row.tag, name: row.current_name,
-              columns: cols, unique: unique, where_sql: where_sql,
+              columns: row.index_columns || [] of String,
+              unique: row.index_unique || false,
+              where_sql: row.index_where_sql,
             )
             ops << Diff::Operation::AddIndex.new(table, recreated)
             next
           end
 
           # Validate definition compatibility.
-          stored = JSON.parse(row.definition)
-          stored_unique = stored["unique"]?.try(&.as_bool) || false
+          stored_unique = row.index_unique || false
           if live_idx.unique != stored_unique
             raise Prostore::DriftError.new(
               "Managed index #{table}.#{row.current_name} has its UNIQUE flag changed " \

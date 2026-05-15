@@ -1,5 +1,4 @@
 require "db"
-require "json"
 require "../connection"
 require "../adapter/live_state"
 require "../migration/bookkeeping"
@@ -142,16 +141,13 @@ module Prostore
         qt = @conn.adapter.quote_ident(Migration::Bookkeeping::SCHEMA_TABLE)
         ph1 = @conn.adapter.placeholder(1)
         ph2 = @conn.adapter.placeholder(2)
-        sql = "SELECT current_name, definition FROM #{qt} " \
+        sql = "SELECT current_name, portable_type FROM #{qt} " \
               "WHERE table_name = #{ph1} AND kind = #{ph2}"
         @conn.with_connection do |db_conn|
           db_conn.query_each(sql, table, Drift::SchemaTable::KIND_COLUMN) do |rs|
             name = rs.read(String)
-            defn = rs.read(String)
-            parsed = JSON.parse(defn)
-            if pt = parsed["portable_type"]?.try(&.as_s?)
-              result[name] = pt
-            end
+            pt = rs.read(String?)
+            result[name] = pt if pt
           end
         end
         result

@@ -229,11 +229,10 @@ module Prostore
         case adapter
         when Prostore::Adapter::SQLite::Adapter
           row = single_row(executor, adapter, step.table_name, Drift::SchemaTable::KIND_INDEX, step.tag)
-          stored = JSON.parse(row.definition)
 
-          cols = (stored["columns"]?.try(&.as_a.map(&.as_s)) || [] of String)
-          unique = stored["unique"]?.try(&.as_bool) || false
-          where_sql = stored["where_sql"]?.try(&.as_s?)
+          cols = row.index_columns || [] of String
+          unique = row.index_unique || false
+          where_sql = row.index_where_sql
 
           executor.exec("DROP INDEX #{adapter.quote_ident(step.from_name)}")
 
@@ -592,8 +591,7 @@ module Prostore
       end
 
       private def matches_columns?(row : Drift::SchemaTable::Row, live_fk : Adapter::LiveForeignKey) : Bool
-        stored = JSON.parse(row.definition)
-        stored_cols = stored["columns"]?.try(&.as_a.map(&.as_s)) || [] of String
+        stored_cols = row.fk_columns || [] of String
         stored_cols == live_fk.columns
       end
 
