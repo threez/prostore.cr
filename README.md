@@ -286,6 +286,8 @@ backend-specific DDL. Nullable types are declared by appending `?`.
 | `BigDecimal` | `decimal` | `TEXT` | `NUMERIC` |
 | `JSON::Any` | `json` | `TEXT` | `JSONB` |
 | `Array(T)` where T is any above | `array_<T>` | `TEXT` (JSON-encoded) | `JSONB` |
+| Any `Enum` subclass (default) | `enum_string` | `TEXT` (member name) | `TEXT` |
+| Any `Enum` subclass, `as: :int` | `enum_int` | `INTEGER` (member value) | `BIGINT` |
 
 `Time` on PostgreSQL is `TIMESTAMP WITH TIME ZONE` (`timestamptz`). Crystal's
 `Time` is always UTC.
@@ -307,6 +309,55 @@ field 9, :domain_ids, Array(String), default: ->{ [] of String }
 
 Alternatively, declare the field nullable (`Array(String)?`) — the default is
 then auto-inferred as `NULL`, at the cost of nil-checking every read site.
+
+### Enums (ADR-0016)
+
+Any Crystal `Enum` subclass — including `@[Flags]` enums — is a valid field
+type. Storage is name-backed (`TEXT`) by default; `as: :int` selects integer
+storage. The declared member set becomes part of the schema and is enforced
+by a named `CHECK` constraint on the column.
+
+```crystal
+enum Status
+  Active
+  Pending
+  Archived
+end
+
+enum Tier
+  Bronze
+  Silver = 5
+  Gold   = 10
+end
+
+@[Flags]
+enum Perms
+  Read
+  Write
+  Execute
+end
+
+class User < Prostore::Model
+  field 1, :id,     Int64,  primary: true, auto_increment: true
+  field 2, :status, Status                 # TEXT, CHECK IN ('Active', 'Pending', 'Archived')
+  field 3, :tier,   Tier,   as: :int       # INTEGER, CHECK IN (0, 5, 10)
+  field 4, :perms,  Perms                  # @[Flags] → INTEGER, CHECK 0..7 (1|2|4)
+end
+```
+
+Reads return the Crystal `Enum` value directly; writes accept it directly. No
+manual `to_s` / `from_value` at call sites.
+
+**Evolution:** members can be *added* freely — migration emits a CHECK-swap
+step that widens the accepted set, existing rows untouched. Members **cannot
+be removed, renamed, or have their integer value changed in place** (existing
+rows may carry the old value; ADR-0003 + ADR-0016). The validator surfaces
+these as `SchemaError` before any DDL runs and points at the
+reserve-and-readd workflow.
+
+`@[Flags]` enums are implicitly int-backed (any combination via `|` must
+round-trip through the integer wire form). Passing `as: :string` for a flags
+enum is a compile error.
 
 ---
 
