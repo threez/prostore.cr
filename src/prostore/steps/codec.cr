@@ -148,7 +148,7 @@ module Prostore
           has_backfill:   f.has_backfill,
           backfill_sql:   f.backfill_sql,
           has_lazy:       f.has_lazy,
-          enum_members:   f.enum_members.try(&.map { |member| {name: member.name, value: member.value} }),
+          enum_members:   f.enum_members.try(&.map { |member| {name: member.name, value: member.value, wire_name: member.wire_name} }),
           enum_is_flags:  f.enum_is_flags,
         }
       end
@@ -159,9 +159,11 @@ module Prostore
             arr = raw.as_a?
             next nil if arr.nil?
             arr.map do |entry|
+              member_name = entry["name"].as_s
               Schema::EnumMember.new(
-                name: entry["name"].as_s,
+                name: member_name,
                 value: entry["value"].as_i64,
+                wire_name: entry["wire_name"]?.try(&.as_s?) || member_name,
               )
             end
           end

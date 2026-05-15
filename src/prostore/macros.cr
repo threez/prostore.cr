@@ -71,10 +71,10 @@ class Prostore::Model
         inner_portable = ::Prostore::Types::PORTABLE[inner_name]
         portable_type = "array_" + inner_portable
       elsif underlying <= ::Enum
-        # Enum field (ADR-0016). Default storage is String (member name);
-        # `as: :int` selects Int64 (member.value). `@[Flags]` enums are
-        # implicitly int-backed because combinations (Read | Write) only
-        # round-trip cleanly through the integer wire form.
+        # Enum field (ADR-0016, ADR-0017). Default storage is String
+        # (member name); `as: :int` selects Int64 (member.value). `@[Flags]`
+        # enums are implicitly int-backed because combinations (Read |
+        # Write) only round-trip cleanly through the integer wire form.
         is_enum = true
         enum_is_flags = !underlying.annotation(::Flags).nil?
         storage = opts[:as] || :string
@@ -88,6 +88,19 @@ class Prostore::Model
           raise "field #{name} on #{@type.name}: as: must be :string or :int, got #{storage}"
         end
         portable_type = storage == :int ? "enum_int" : "enum_string"
+        # `naming:` selects how member names are translated to the storage
+        # wire form for `enum_string` columns (ADR-0017). `:as_declared`
+        # (default) keeps Crystal's PascalCase. `:snake_case`, `:lower_case`,
+        # and `:kebab_case` cover the conventions apps already expose in
+        # external surfaces (JSON, Prometheus, HTML option values).
+        enum_naming = opts[:naming] || :as_declared
+        allowed_naming = [:as_declared, :snake_case, :lower_case, :kebab_case]
+        unless allowed_naming.includes?(enum_naming)
+          raise "field #{name} on #{@type.name}: naming: must be one of #{allowed_naming}, got #{enum_naming}"
+        end
+        if portable_type == "enum_int" && enum_naming != :as_declared
+          raise "field #{name} on #{@type.name}: naming: applies only to enum_string columns; an int-backed enum stores integers."
+        end
       elsif ::Prostore::Types::PORTABLE.keys.includes?(type_name)
         portable_type = ::Prostore::Types::PORTABLE[type_name]
       else
@@ -120,6 +133,11 @@ class Prostore::Model
       # silently ignored on other types.
       if opts[:as] != nil && !is_enum
         raise "field #{name} on #{@type.name}: `as:` is only valid for Enum field types (ADR-0016)"
+      end
+      # Same guard for `naming:` (ADR-0017) — non-enum types have no member
+      # set to name.
+      if opts[:naming] != nil && !is_enum
+        raise "field #{name} on #{@type.name}: `naming:` is only valid for Enum field types (ADR-0017)"
       end
 
       # `lazy:` mutually exclusive with `default:` / `backfill:`; requires T?
@@ -238,6 +256,7 @@ class Prostore::Model
         is_enum:         is_enum,
         enum_is_flags:   enum_is_flags,
         enum_class_id:   is_enum ? underlying.id.stringify : nil,
+        enum_naming:     is_enum ? enum_naming : nil,
       }
     %}
   end

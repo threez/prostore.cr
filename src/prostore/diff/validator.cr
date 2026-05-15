@@ -139,6 +139,16 @@ module Prostore
                 "Reserve the tag and add a new field if the value space must change."
               )
             end
+            if existing.wire_name != desired_member.wire_name
+              raise Prostore::SchemaError.new(
+                "Field tag #{tag} on #{definition.table_name}: enum member " \
+                "#{desired_member.name} wire_name changed (#{existing.wire_name.inspect} → " \
+                "#{desired_member.wire_name.inspect}). Forbidden in-place — existing rows still " \
+                "carry the old wire value and would fail the CHECK constraint or be silently " \
+                "unreadable (ADR-0017). Write an explicit data migration first (UPDATE the " \
+                "column to the new wire values), then change the `naming:` declaration."
+              )
+            end
           end
         end
 

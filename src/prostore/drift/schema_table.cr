@@ -194,10 +194,15 @@ module Prostore
         Array(String).from_json(raw)
       end
 
-      # Enum members are JSON-encoded as `[[name, value], ...]` — a compact
-      # form (vs. the typed record's `[{"name":..,"value":..}, ...]`) keeps
-      # the bookkeeping row small and avoids a JSON::Serializable dependency
-      # on the schema record. Decode mirrors that shape.
+      # Enum members are JSON-encoded compactly as nested arrays:
+      #   `[[name, value], ...]`              — wire_name == name (default)
+      #   `[[name, value, wire_name], ...]`   — explicit wire override (ADR-0017)
+      #
+      # The 2-tuple form keeps rows small for the common `:as_declared`
+      # case and stays compatible with bookkeeping rows written by
+      # prostore 0.3.x (which never emitted wire_name). The 3-tuple form
+      # is used when the field's `naming:` algorithm or a per-member
+      # annotation pushed wire_name away from name.
       private def read_enum_members(rs : DB::ResultSet) : Array(Schema::EnumMember)?
         raw = rs.read(String?)
         return nil if raw.nil?
@@ -206,11 +211,12 @@ module Prostore
         return nil if arr.nil?
         arr.compact_map do |entry|
           pair = entry.as_a?
-          next nil if pair.nil? || pair.size != 2
+          next nil if pair.nil? || pair.size < 2 || pair.size > 3
           name = pair[0].as_s?
           val = pair[1].as_i64?
           next nil if name.nil? || val.nil?
-          Schema::EnumMember.new(name: name, value: val)
+          wire = pair.size == 3 ? (pair[2].as_s? || name) : name
+          Schema::EnumMember.new(name: name, value: val, wire_name: wire)
         end
       end
 
@@ -278,6 +284,10 @@ module Prostore
               json.array do
                 json.string member.name
                 json.number member.value
+                # Only emit wire_name when it differs from name — keeps the
+                # common `:as_declared` case at 2-tuple size and round-trips
+                # cleanly via the size-discriminated reader.
+                json.string member.wire_name if member.wire_name != member.name
               end
             end
           end

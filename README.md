@@ -359,6 +359,56 @@ reserve-and-readd workflow.
 round-trip through the integer wire form). Passing `as: :string` for a flags
 enum is a compile error.
 
+#### Wire format — `naming:` (ADR-0017)
+
+By default, `enum_string` columns store the source-level member name
+(`"BounceHard"`). Pass `naming:` to translate to a different convention —
+useful when the column is exposed verbatim to external surfaces (JSON
+APIs, Prometheus labels, HTML `<option value>` markup) that already use
+snake_case or lower_case:
+
+```crystal
+enum Reason
+  Active
+  BounceHard
+  ComplaintAbuse
+end
+
+class Suppression < Prostore::Model
+  field 1, :id,     Int64,  primary: true, auto_increment: true
+  field 2, :reason, Reason, naming: :snake_case
+  # → stored as "active" / "bounce_hard" / "complaint_abuse"
+  # → CHECK (reason IN ('active', 'bounce_hard', 'complaint_abuse'))
+end
+```
+
+Supported algorithms:
+
+| Symbol | `BounceHard` → |
+|---|---|
+| `:as_declared` (default) | `BounceHard` |
+| `:snake_case` | `bounce_hard` |
+| `:kebab_case` | `bounce-hard` |
+| `:lower_case` | `bouncehard` |
+
+The Crystal source-level name remains the canonical identifier in your
+code (`Reason::BounceHard`). The `naming:` option only changes how the
+value is *stored* and how it appears in the CHECK constraint. Reads and
+writes via the ORM are transparent — you continue to assign and read
+Crystal enum values directly.
+
+**`naming:` only applies to `enum_string` columns** — int-backed and
+`@[Flags]` enums store integers, so there's no name to translate. The
+macro rejects `naming:` on those at compile time.
+
+**Changing `naming:` on an existing column is a data migration.** The
+stored bytes encode the old wire form; switching the algorithm without
+rewriting existing rows would either fail the CHECK constraint or
+silently corrupt reads. The validator detects this and raises a
+`SchemaError` with the recommended workflow (UPDATE the column to the
+new wire values via raw SQL, *then* change the declaration). See
+ADR-0017 for the full discipline.
+
 ---
 
 ## CRUD

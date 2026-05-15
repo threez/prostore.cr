@@ -68,7 +68,7 @@ module Prostore
               max = members.sum(&.value)
               "#{col} >= 0 AND #{col} <= #{max}"
             elsif field.portable_type == "enum_string"
-              list = members.map { |member| "'#{member.name.gsub("'", "''")}'" }.join(", ")
+              list = members.map { |member| "'#{member.wire_name.gsub("'", "''")}'" }.join(", ")
               "#{col} IN (#{list})"
             else
               list = members.map(&.value).join(", ")

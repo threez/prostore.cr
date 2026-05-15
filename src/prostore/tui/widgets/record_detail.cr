@@ -444,7 +444,11 @@ module Prostore
         member = info.members[@enum_pending_index]?
         return unless member
         pt = @portable_types[col.name]?
-        @row[col.name] = (pt == "enum_int") ? member.value.to_s : member.name
+        # For enum_string columns the storage value is the wire form
+        # (ADR-0017) — the picker displays member.name to the user but
+        # writes member.wire_name to the row so reads/writes round-trip
+        # under custom `naming:` algorithms.
+        @row[col.name] = (pt == "enum_int") ? member.value.to_s : member.wire_name
         @dirty << col.name
         @field_errors.delete(col.name)
         @enum_editing = false
@@ -480,7 +484,8 @@ module Prostore
       end
 
       # Find the member index that matches the stored raw value.
-      # For `enum_string` we compare by member name; for `enum_int` by the
+      # For `enum_string` we compare by member wire_name (the stored form
+      # under ADR-0017's naming algorithms); for `enum_int` by the
       # underlying integer. Returns 0 on no match so the picker always lands
       # on a defined member rather than a phantom index.
       private def decode_enum_index(raw : String?, info : Browser::EnumColumn,
@@ -492,7 +497,7 @@ module Prostore
           idx = info.members.index { |member| member.value == parsed }
           idx || 0
         else
-          idx = info.members.index { |member| member.name == raw }
+          idx = info.members.index { |member| member.wire_name == raw }
           idx || 0
         end
       end
@@ -642,9 +647,15 @@ module Prostore
       # Render the vertical picker for either the enum radio (`radio: true`)
       # or the flags checkbox (`radio: false`). Both share layout — the only
       # difference is the marker glyph and which set drives the highlight.
+      #
+      # For enum_string columns we label each row with the wire_name (what
+      # actually hits storage under ADR-0017). For enum_int and @[Flags]
+      # the wire form is an integer that wouldn't be human-readable, so we
+      # fall back to the source-level member name.
       private def enum_picker_lines(col : Adapter::LiveColumn, radio : Bool) : Array(String)
         info = @enum_columns[col.name]?
         return [Term.dim("(no members)")] if info.nil? || info.members.empty?
+        use_wire = (@portable_types[col.name]? == "enum_string")
         info.members.map_with_index do |member, index|
           pointer = (index == @enum_focus) ? "▸" : " "
           marker = if radio
@@ -652,7 +663,8 @@ module Prostore
                    else
                      @flags_pending.includes?(index) ? "[x]" : "[ ]"
                    end
-          "#{pointer} #{marker} #{member.name}"
+          label = use_wire ? member.wire_name : member.name
+          "#{pointer} #{marker} #{label}"
         end
       end
 

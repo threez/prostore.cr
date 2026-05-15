@@ -1,5 +1,6 @@
 require "db"
 require "./adapter/base"
+require "./schema/enum_member"
 
 module Prostore
   # Record-layer helpers shared by every model class.
@@ -47,16 +48,18 @@ module Prostore
       value.nil? ? nil : value.to_json.as(::DB::Any)
     end
 
-    # Enum coercion (ADR-0016). Dispatches on the portable tag: `enum_int`
-    # stores the underlying integer (`Int64`-promoted), `enum_string` stores
-    # the member's source-level name. The reverse trip lives in the
-    # macro-emitted `___assign_from_rs` (uses `EnumClass.from_value` /
-    # `EnumClass.parse`).
-    def coerce_for_write(value : ::Enum?, portable_type : String) : ::DB::Any
+    # Enum coercion (ADR-0016, ADR-0017). Dispatches on the portable tag:
+    # `enum_int` stores the underlying integer (`Int64`-promoted),
+    # `enum_string` stores the wire form derived from the source-level name
+    # via the field's `naming:` algorithm (defaults to `:as_declared`,
+    # which preserves the PascalCase Crystal identifier verbatim). The
+    # reverse trip lives in the macro-emitted `___assign_from_rs`.
+    def coerce_for_write(value : ::Enum?, portable_type : String,
+                         naming : ::Symbol = :as_declared) : ::DB::Any
       return nil if value.nil?
       case portable_type
       when "enum_int" then value.value.to_i64.as(::DB::Any)
-      else                 value.to_s.as(::DB::Any)
+      else                 ::Prostore::Schema::NameConversion.apply(value.to_s, naming).as(::DB::Any)
       end
     end
 

@@ -187,7 +187,11 @@ module Prostore
                     has_lazy: {{ f[:has_lazy] }},
                     {% if f[:is_enum] %}
                     enum_members: {{ f[:enum_class_id].id }}.values.map { |__m|
-                      ::Prostore::Schema::EnumMember.new(name: __m.to_s, value: __m.value.to_i64)
+                      ::Prostore::Schema::EnumMember.new(
+                        name: __m.to_s,
+                        value: __m.value.to_i64,
+                        wire_name: ::Prostore::Schema::NameConversion.apply(__m.to_s, {{ f[:enum_naming] }}),
+                      )
                     },
                     enum_is_flags: {{ f[:enum_is_flags] }},
                     {% end %}
@@ -390,7 +394,17 @@ module Prostore
               \{{ instance }}.\{{ f[:name].id }} = ___raw.try { |s| \{{ f[:ruby_type] }}.from_json(s) }
             \{% elsif pt == "enum_string" %}
               ___raw = \{{ rs }}.read(::String?)
-              \{{ instance }}.\{{ f[:name].id }} = ___raw.try { |s| \{{ f[:enum_class_id].id }}.parse(s) }
+              \{{ instance }}.\{{ f[:name].id }} = ___raw.try { |s|
+                \{% if f[:enum_naming] == nil || f[:enum_naming] == :as_declared %}
+                  \{{ f[:enum_class_id].id }}.parse(s)
+                \{% else %}
+                  \{{ f[:enum_class_id].id }}.values.find { |__m|
+                    ::Prostore::Schema::NameConversion.apply(__m.to_s, \{{ f[:enum_naming] }}) == s
+                  } || raise ::Prostore::Error.new(
+                    "no \{{ f[:enum_class_id].id }} member matches wire value #{s.inspect} under naming \{{ f[:enum_naming] }} (ADR-0017)"
+                  )
+                \{% end %}
+              }
             \{% elsif pt == "enum_int" %}
               ___raw = ::Prostore::Records.read_int64(\{{ rs }})
               \{{ instance }}.\{{ f[:name].id }} = ___raw.try { |i| \{{ f[:enum_class_id].id }}.from_value(i) }
@@ -472,7 +486,11 @@ module Prostore
                     # Auto-increment PK is omitted from INSERT.
                   {% else %}
                     cols << {{ f[:name].id.stringify }}
-                    vals << ::Prostore::Records.coerce_for_write(@{{ f[:name].id }}, {{ f[:portable_type] }})
+                    {% if f[:is_enum] %}
+                      vals << ::Prostore::Records.coerce_for_write(@{{ f[:name].id }}, {{ f[:portable_type] }}, {{ f[:enum_naming] }})
+                    {% else %}
+                      vals << ::Prostore::Records.coerce_for_write(@{{ f[:name].id }}, {{ f[:portable_type] }})
+                    {% end %}
                   {% end %}
                 {% end %}
 
@@ -494,7 +512,11 @@ module Prostore
                 {% for f in @type.constant("FIELDS") %}
                   {% unless f[:primary] %}
                     cols << {{ f[:name].id.stringify }}
-                    vals << ::Prostore::Records.coerce_for_write(@{{ f[:name].id }}, {{ f[:portable_type] }})
+                    {% if f[:is_enum] %}
+                      vals << ::Prostore::Records.coerce_for_write(@{{ f[:name].id }}, {{ f[:portable_type] }}, {{ f[:enum_naming] }})
+                    {% else %}
+                      vals << ::Prostore::Records.coerce_for_write(@{{ f[:name].id }}, {{ f[:portable_type] }})
+                    {% end %}
                   {% end %}
                 {% end %}
 

@@ -33,7 +33,11 @@ module Prostore
           io << ':' << (field.enum_is_flags ? "flags" : "_")
           io << ':' << (
             if members = field.enum_members
-              members.map { |member| "#{member.name}=#{member.value}" }.join(',')
+              # `wire_name` is part of the schema contract (ADR-0017): a
+              # member rename or naming-algorithm change must be visible
+              # to the drift detector and the version-skew check, even
+              # when the source-level name stays the same.
+              members.map { |member| "#{member.name}=#{member.value}=#{member.wire_name}" }.join(',')
             else
               "_"
             end
