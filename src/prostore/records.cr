@@ -47,6 +47,19 @@ module Prostore
       value.nil? ? nil : value.to_json.as(::DB::Any)
     end
 
+    # Enum coercion (ADR-0016). Dispatches on the portable tag: `enum_int`
+    # stores the underlying integer (`Int64`-promoted), `enum_string` stores
+    # the member's source-level name. The reverse trip lives in the
+    # macro-emitted `___assign_from_rs` (uses `EnumClass.from_value` /
+    # `EnumClass.parse`).
+    def coerce_for_write(value : ::Enum?, portable_type : String) : ::DB::Any
+      return nil if value.nil?
+      case portable_type
+      when "enum_int" then value.value.to_i64.as(::DB::Any)
+      else                 value.to_s.as(::DB::Any)
+      end
+    end
+
     # ---- Type coercion at row-read time -----------------------------------
     #
     # SQLite returns these custom types as `String`/`Bytes`/`Nil`; Postgres
@@ -102,6 +115,23 @@ module Prostore
       when ::JSON::PullParser then ::JSON::Any.new(raw).to_json
       else
         raise ::Prostore::Error.new("Unexpected wire type for array column: #{raw.class}")
+      end
+    end
+
+    # Read an `Int64?` from a result set, accepting any integer-typed wire
+    # form. SQLite returns INTEGER columns as Int64 already; Postgres may
+    # return Int32 for narrower column types. Used by the enum_int reader to
+    # stay agnostic to the live column width.
+    def read_int64(rs : ::DB::ResultSet) : ::Int64?
+      raw = rs.read
+      case raw
+      when ::Nil   then nil
+      when ::Int64 then raw
+      when ::Int32 then raw.to_i64
+      when ::Int16 then raw.to_i64
+      when ::Int8  then raw.to_i64
+      else
+        raise ::Prostore::Error.new("Unexpected wire type for enum_int column: #{raw.class}")
       end
     end
 

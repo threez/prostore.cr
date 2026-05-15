@@ -61,6 +61,8 @@ class Prostore::Model
       # mapping collapses them to JSONB. Native PG arrays (INTEGER[] etc.)
       # are deferred — JSONB gives a uniform IO path on day one.
       portable_type = nil
+      is_enum = false
+      enum_is_flags = false
       if type_name.starts_with?("Array(")
         inner_name = type_name[6..(type_name.size - 2)]
         unless ::Prostore::Types::PORTABLE.keys.includes?(inner_name)
@@ -68,11 +70,30 @@ class Prostore::Model
         end
         inner_portable = ::Prostore::Types::PORTABLE[inner_name]
         portable_type = "array_" + inner_portable
-      else
-        unless ::Prostore::Types::PORTABLE.keys.includes?(type_name)
-          raise "field type #{type_name.id} is not in the portable type set (ADR-0014). Allowed: Int32, Int64, Float32, Float64, String, Bool, Time, Bytes, UUID, BigDecimal, JSON::Any, Array(T)."
+      elsif underlying <= ::Enum
+        # Enum field (ADR-0016). Default storage is String (member name);
+        # `as: :int` selects Int64 (member.value). `@[Flags]` enums are
+        # implicitly int-backed because combinations (Read | Write) only
+        # round-trip cleanly through the integer wire form.
+        is_enum = true
+        enum_is_flags = !underlying.annotation(::Flags).nil?
+        storage = opts[:as] || :string
+        if enum_is_flags
+          if opts[:as] != nil && opts[:as] != :int
+            raise "field #{name} on #{@type.name}: @[Flags] enum #{type_name.id} must be int-backed; omit `as:` or pass `as: :int`."
+          end
+          storage = :int
         end
+        unless storage == :string || storage == :int
+          raise "field #{name} on #{@type.name}: as: must be :string or :int, got #{storage}"
+        end
+        portable_type = storage == :int ? "enum_int" : "enum_string"
+      elsif ::Prostore::Types::PORTABLE.keys.includes?(type_name)
         portable_type = ::Prostore::Types::PORTABLE[type_name]
+      else
+        raise "field type #{type_name.id} is not in the portable type set (ADR-0014, 0015, 0016). " \
+              "Allowed: Int32, Int64, Float32, Float64, String, Bool, Time, Bytes, UUID, BigDecimal, JSON::Any, " \
+              "Array(T), or any Crystal Enum subclass."
       end
       crystal_type = nullable ? type_name + "?" : type_name
 
@@ -80,14 +101,25 @@ class Prostore::Model
       primary = opts[:primary] == true
       auto_increment = opts[:auto_increment] == true
 
-      # `auto_increment` only on Int32/Int64 + primary (ADR-0013).
+      # `auto_increment` only on Int32/Int64 + primary (ADR-0013). Enums are
+      # not eligible even when int-backed — the value space is the enum's
+      # discrete members, not a generator sequence.
       if auto_increment
         unless primary
           raise "field #{name} on #{@type.name}: auto_increment requires primary: true (ADR-0013)"
         end
+        if is_enum
+          raise "field #{name} on #{@type.name}: auto_increment is not supported on enum fields (ADR-0013/0016)"
+        end
         unless portable_type == "int32" || portable_type == "int64"
           raise "field #{name} on #{@type.name}: auto_increment requires Int32 or Int64 (ADR-0013)"
         end
+      end
+
+      # `as:` is only meaningful for enum types — flag the misuse so it isn't
+      # silently ignored on other types.
+      if opts[:as] != nil && !is_enum
+        raise "field #{name} on #{@type.name}: `as:` is only valid for Enum field types (ADR-0016)"
       end
 
       # `lazy:` mutually exclusive with `default:` / `backfill:`; requires T?
@@ -190,6 +222,9 @@ class Prostore::Model
         default_lambda:  default_lambda,
         backfill_lambda: backfill_lambda,
         ruby_type:       type,
+        is_enum:         is_enum,
+        enum_is_flags:   enum_is_flags,
+        enum_class_id:   is_enum ? underlying.id.stringify : nil,
       }
     %}
   end
