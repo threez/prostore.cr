@@ -38,6 +38,13 @@ private class SpecLiteralDefaults < Prostore::Model
   field 5, :created_at, Time, default: :CURRENT_TIMESTAMP
 end
 
+private class SpecNullableDefaults < Prostore::Model
+  field 1, :id, Int64, primary: true, auto_increment: true
+  field 2, :nickname, String?
+  field 3, :score, Int32?, default: 0
+  field 4, :note, String?, lazy: ->(_id : Int64) { "x" }
+end
+
 describe "Prostore::Model schema introspection" do
   it "registers every subclass in Prostore.models" do
     Prostore.models.should contain(SpecUser)
@@ -117,6 +124,43 @@ describe "Prostore::Model schema introspection" do
     it "emits SymbolLiteral verbatim as SQL keyword/function" do
       f = SpecLiteralDefaults.prostore_schema.field(:created_at).not_nil!
       f.default_sql.should eq("CURRENT_TIMESTAMP")
+    end
+  end
+
+  describe "implicit NULL default/backfill for nullable fields" do
+    it "sets default and backfill to NULL when neither is specified" do
+      f = SpecNullableDefaults.prostore_schema.field(:nickname).not_nil!
+      f.nullable.should be_true
+      f.has_default.should be_true
+      f.default_sql.should eq("NULL")
+      f.has_backfill.should be_true
+      f.backfill_sql.should eq("NULL")
+    end
+
+    it "preserves an explicit default on a nullable field" do
+      f = SpecNullableDefaults.prostore_schema.field(:score).not_nil!
+      f.nullable.should be_true
+      f.has_default.should be_true
+      f.default_sql.should eq("0")
+      # backfill still auto-NULLed when not specified
+      f.has_backfill.should be_true
+      f.backfill_sql.should eq("NULL")
+    end
+
+    it "leaves non-nullable fields without an implicit default" do
+      f = SpecUser.prostore_schema.field(:email).not_nil!
+      f.nullable.should be_false
+      f.has_default.should be_false
+      f.default_sql.should be_nil
+      f.has_backfill.should be_false
+      f.backfill_sql.should be_nil
+    end
+
+    it "does not interfere with lazy: fields (mutually exclusive per ADR-0011)" do
+      f = SpecNullableDefaults.prostore_schema.field(:note).not_nil!
+      f.has_lazy.should be_true
+      f.has_default.should be_false
+      f.has_backfill.should be_false
     end
   end
 end

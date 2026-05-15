@@ -151,6 +151,22 @@ class Prostore::Model
         end
       end
 
+      # Nullable fields without an explicit default/backfill carry an
+      # implicit NULL. Making this explicit in the metadata keeps the
+      # schema record symmetric with non-nullable fields, lets `:set_default`
+      # FK actions target the NULL fallback, and removes the implicit
+      # "absence of default == NULL" rule from downstream consumers. Lazy
+      # fields are skipped — `lazy:` is mutually exclusive with default/
+      # backfill (ADR-0011).
+      if nullable && !has_default && !has_lazy
+        has_default = true
+        default_sql = "NULL"
+      end
+      if nullable && !has_backfill && !has_lazy
+        has_backfill = true
+        backfill_sql = "NULL"
+      end
+
       # Capture lambda AST nodes for runtime invocation. The macro_finished
       # synthesizer emits these as class constants per tag.
       lazy_lambda = (has_lazy && opts[:lazy].is_a?(ProcLiteral)) ? opts[:lazy] : nil
