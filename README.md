@@ -294,6 +294,20 @@ Array types use JSONB on PostgreSQL and JSON-encoded TEXT on SQLite. Native
 PostgreSQL arrays (e.g., `INTEGER[]`) are not used — JSONB provides a uniform IO
 path across both backends.
 
+Reads return `Array(T)` directly and writes accept `Array(T)` — encoding to JSON
+happens at the model boundary, so callers never touch `to_json` / `from_json`.
+
+Array literals are **not** accepted as `default:` values (the parser only takes
+scalar literals, symbols, `SQL.expr(...)`, or a lambda). For an "always an
+array, possibly empty" field, use a 0-arg lambda:
+
+```crystal
+field 9, :domain_ids, Array(String), default: ->{ [] of String }
+```
+
+Alternatively, declare the field nullable (`Array(String)?`) — the default is
+then auto-inferred as `NULL`, at the cost of nil-checking every read site.
+
 ---
 
 ## CRUD
