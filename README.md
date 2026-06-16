@@ -376,12 +376,10 @@ end
 
 Supported algorithms:
 
-| Symbol | `BounceHard` → |
-|---|---|
-| `:as_declared` (default) | `BounceHard` |
-| `:snake_case` | `bounce_hard` |
-| `:kebab_case` | `bounce-hard` |
-| `:lower_case` | `bouncehard` |
+- `:as_declared` (default) — `BounceHard`
+- `:snake_case` — `bounce_hard`
+- `:kebab_case` — `bounce-hard`
+- `:lower_case` — `bouncehard`
 
 The Crystal source-level name remains the canonical identifier in your
 code (`Reason::BounceHard`). The `naming:` option only changes how the
@@ -555,15 +553,13 @@ User.all.joins("orders", ["id"], ["user_id"])
 
 #### Terminal methods
 
-| Method | Return type | Description |
-|--------|-------------|-------------|
-| `to_a` | `Array(T)` | Execute and return all rows. |
-| `each { \|row\| }` | `Nil` | Stream rows without building an array. |
-| `first` | `T?` | First row or nil. |
-| `first!` | `T` | First row, raises if none. |
-| `count` | `Int64` | `SELECT COUNT(*)`. |
-| `empty?` | `Bool` | `count.zero?`. |
-| `exists?` | `Bool` | `!empty?`. |
+- `to_a` *(`Array(T)`)* — execute and return all rows
+- `each { |row| }` *(`Nil`)* — stream rows without building an array
+- `first` *(`T?`)* — first row or nil
+- `first!` *(`T`)* — first row, raises if none
+- `count` *(`Int64`)* — `SELECT COUNT(*)`
+- `empty?` *(`Bool`)* — `count.zero?`
+- `exists?` *(`Bool`)* — `!empty?`
 
 ### Predicates (Q module)
 
@@ -640,12 +636,10 @@ rule.
 `default:` accepts four forms. They differ in *when* the value is computed
 and *who* computes it — pick the form that matches your need:
 
-| Form | DDL `DEFAULT` clause emitted? | Applied on `.new + .save`? | Applied on raw SQL `INSERT` (column omitted)? |
-|---|---|---|---|
-| Scalar literal (`true`, `42`, `"active"`) | yes | **yes** — ivar seeded at save | yes |
-| Symbol (`:CURRENT_TIMESTAMP`, `:gen_random_uuid`) | yes (verbatim) | no — DB-side only [†] | yes |
-| `SQL.expr("…")` | yes (verbatim) | no — DB-side only [†] | yes |
-| Crystal lambda `->(_m) { … }` | no | **yes** — lambda runs before INSERT | no (lambda is ORM-only) |
+- Scalar literal (`true`, `42`, `"active"`) — DDL `DEFAULT` emitted; **ivar seeded** on `.new + .save`; applies on raw SQL INSERT
+- Symbol (`:CURRENT_TIMESTAMP`, `:gen_random_uuid`) — DDL `DEFAULT` emitted verbatim; DB-side only [†]; applies on raw SQL INSERT
+- `SQL.expr("…")` — DDL `DEFAULT` emitted verbatim; DB-side only [†]; applies on raw SQL INSERT
+- Crystal lambda `->(_m) { … }` — no DDL `DEFAULT`; **lambda runs** before INSERT; ORM-only (not applied on raw SQL INSERT)
 
 [†] The macro always lists every non-PK column in the ORM's INSERT, so the
 DDL `DEFAULT` is shadowed by the explicit NULL bound from the unset ivar.
@@ -945,15 +939,13 @@ identifies the *target state*, not the labeling.
 If the database is modified outside of prostore (a DBA renames a column, drops
 an index, etc.), the next `migrate` call detects the drift:
 
-| Drift type | Behavior |
-|-----------|----------|
-| Managed column renamed externally | Auto-fix: rename back. |
-| Managed column dropped externally | **Error** — data was lost; restore or reserve the tag. |
-| Managed column type/nullability changed externally | **Error** — in-place changes are forbidden (ADR-0003). |
-| Managed index dropped | Auto-fix: recreate. |
-| Managed index renamed externally | Auto-fix: rename back. |
-| Managed index UNIQUE flag changed | **Error** — definition change requires a new tag. |
-| Unmanaged column, index, or table | Tolerated. |
+- Managed column renamed externally — auto-fix: rename back
+- Managed column dropped externally — **Error**: data was lost; restore or reserve the tag
+- Managed column type/nullability changed externally — **Error**: in-place changes are forbidden (ADR-0003)
+- Managed index dropped — auto-fix: recreate
+- Managed index renamed externally — auto-fix: rename back
+- Managed index UNIQUE flag changed — **Error**: definition change requires a new tag
+- Unmanaged column, index, or table — tolerated
 
 ---
 
@@ -1000,12 +992,10 @@ conn.close
 Several SQLite pragmas can be passed as URL query parameters and are applied
 to every connection via `PRAGMA`:
 
-| Parameter | SQLite PRAGMA |
-|-----------|--------------|
-| `journal_mode` | `PRAGMA journal_mode = <value>` |
-| `synchronous` | `PRAGMA synchronous = <value>` |
-| `cache_size` | `PRAGMA cache_size = <value>` |
-| `temp_store` | `PRAGMA temp_store = <value>` |
+- `journal_mode` — `PRAGMA journal_mode = <value>`
+- `synchronous` — `PRAGMA synchronous = <value>`
+- `cache_size` — `PRAGMA cache_size = <value>`
+- `temp_store` — `PRAGMA temp_store = <value>`
 
 ```crystal
 # Enable WAL mode
@@ -1027,11 +1017,9 @@ enable **WAL mode** and set a non-zero **busy_timeout**:
 Prostore.setup("sqlite3://app.db?journal_mode=wal&synchronous=normal&busy_timeout=5000")
 ```
 
-| Setting | Why |
-|---------|-----|
-| `journal_mode=wal` | Readers never block the writer; the writer never blocks readers |
-| `synchronous=normal` | Safe with WAL (checkpoints are still fsync'd); faster than `full` |
-| `busy_timeout=5000` | Writer retries for up to 5 s on lock contention instead of failing immediately |
+- `journal_mode=wal` — readers never block the writer; the writer never blocks readers
+- `synchronous=normal` — safe with WAL (checkpoints are still fsync'd); faster than `full`
+- `busy_timeout=5000` — writer retries for up to 5 s on lock contention instead of failing immediately
 
 Increase `max_pool_size` (via URL) to allow Crystal fibers to hold multiple
 concurrent reader connections:
