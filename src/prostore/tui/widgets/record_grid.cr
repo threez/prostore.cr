@@ -1,11 +1,14 @@
-require "../widget"
+require "tui"
 require "../browser"
 require "../style"
 require "../column_types"
 
 module Prostore
   module TUI
-    class RecordGrid < Widget
+    class RecordGrid
+      include ::TUI::Scrollable
+      include ::TUI::Pickable
+
       PAGE_SIZE     = 50
       MIN_COL_WIDTH =  8
 
@@ -13,8 +16,7 @@ module Prostore
       property on_open_detail : Proc(String, String, Nil)?
       property on_new_row : Proc(String, Nil)?
 
-      def initialize(x : Int32, y : Int32, width : Int32, height : Int32, @browser : Browser)
-        super(x, y, width, height)
+      def initialize(@browser : Browser)
         @table = nil
         @col_names = [] of String
         @col_types = {} of String => String # SQL type_text fallback
@@ -70,15 +72,16 @@ module Prostore
         Filter.new(@filter_term, @searchable_cols)
       end
 
-      def render(screen : Screen) : Nil
+      # Paginated (server-side), not scrolled — SplitWindow's scrollbar
+      # would be misleading if this reported @total, so it reports only
+      # what's on the current page (never more than fits in one screen).
+      def content_size : Int32
+        @rows.size
+      end
+
+      def title : String
         t = @table || "(no table)"
         total_pages = [(@total.to_f / PAGE_SIZE).ceil.to_i, 1].max
-        inner_w = width - 2
-
-        from, to_col, col_widths = visible_col_range(inner_w)
-        n = @col_names.size
-
-        scroll_info = n > (to_col - from + 1) ? "  col #{from + 1}-#{to_col + 1}/#{n}" : ""
         search_part = if @search_active
                         "  /#{@filter_term}█"
                       elsif !@filter_term.empty?
@@ -86,28 +89,29 @@ module Prostore
                       else
                         ""
                       end
-        title_str = "#{t}  pg #{@page + 1}/#{total_pages}  #{@total} rows#{scroll_info}#{search_part}"
-        title = focused? ? Term.bold(title_str) : title_str
-        screen.box(y, x, height, width, title)
+        "#{t}  pg #{@page + 1}/#{total_pages}  #{@total} rows#{search_part}"
+      end
 
+      def render_content(buffer : ::TUI::Buffer, scroll : ::TUI::ScrollControl) : Nil
         return if @col_names.empty?
 
+        from, to_col, col_widths = visible_col_range(buffer.width)
         vis_names = @col_names[from..to_col]
 
         # Header
         header = build_row_str(vis_names.map { |name|
           ref = @fk_refs[name]?
-          ref ? "#{Term.bold(name)} #{Style.fk_ref("→#{ref}")}" : Term.bold(name)
+          ref ? "#{::TUI::Term.bold(name)} #{Style.fk_ref("→#{ref}")}" : ::TUI::Term.bold(name)
         }, col_widths)
-        screen.at(y + 1, x + 1, Term.fit(header, inner_w))
+        buffer.set(0, 0, ::TUI::Term.fit(header, buffer.width))
 
         # Data rows
         @rows.each_with_index do |row, i|
-          row_y = y + 2 + i
-          break if row_y >= y + height - 1
+          row_y = 1 + i
+          break if row_y >= buffer.height
           vis_cells = row[from..to_col].map_with_index do |v, ci|
             if v.nil?
-              Term.dim("(null)")
+              ::TUI::Term.dim("(null)")
             else
               col_name = vis_names[ci]
               pt = @portable_types[col_name]?
@@ -121,13 +125,13 @@ module Prostore
               end
             end
           end
-          line = Term.fit(build_row_str(vis_cells, col_widths), inner_w)
+          line = ::TUI::Term.fit(build_row_str(vis_cells, col_widths), buffer.width)
           if i == @cursor && focused?
-            screen.at(row_y, x + 1, Term.reverse(Term.strip_ansi(line)))
+            buffer.set(row_y, 0, ::TUI::Term.reverse(::TUI::Term.strip_ansi(line)))
           elsif i == @cursor
-            screen.at(row_y, x + 1, Term.bold(Term.strip_ansi(line)))
+            buffer.set(row_y, 0, ::TUI::Term.bold(::TUI::Term.strip_ansi(line)))
           else
-            screen.at(row_y, x + 1, line)
+            buffer.set(row_y, 0, line)
           end
         end
       end
@@ -136,30 +140,32 @@ module Prostore
         if @search_active
           " type to filter  Backspace:erase  Enter/Esc:done"
         else
-          " ESC:back  ↑↓:row  ←→:cols  Enter:detail  PgUp/Dn:page  /:search  n:new  d:delete  q:quit"
+          n = @col_names.size
+          col_hint = n > 0 ? "  ←→:cols" : ""
+          " ↑↓:row#{col_hint}  Enter:detail  PgUp/Dn:page  /:search  n:new  d:delete  q:quit"
         end
       end
 
-      def handle_key(ev : KeyEvent) : Bool
+      def handle_key(ev : ::TUI::KeyEvent, scroll : ::TUI::ScrollControl) : Bool
         t = @table
         return false unless t
 
         return handle_search_key(ev) if @search_active
 
         case ev.key
-        when Key::Up
+        when ::TUI::Key::Up
           @cursor = [@cursor - 1, 0].max
           true
-        when Key::Down
+        when ::TUI::Key::Down
           @cursor = [@cursor + 1, [@rows.size - 1, 0].max].min
           true
-        when Key::Left
+        when ::TUI::Key::Left
           @col_offset = [@col_offset - 1, 0].max
           true
-        when Key::Right
+        when ::TUI::Key::Right
           @col_offset = [@col_offset + 1, max_col_offset].min
           true
-        when Key::PageDown
+        when ::TUI::Key::PageDown
           total_pages = [(@total.to_f / PAGE_SIZE).ceil.to_i - 1, 0].max
           if @page < total_pages
             @page += 1
@@ -167,17 +173,17 @@ module Prostore
             reload
           end
           true
-        when Key::PageUp
+        when ::TUI::Key::PageUp
           if @page > 0
             @page -= 1
             @cursor = 0
             reload
           end
           true
-        when Key::Enter
+        when ::TUI::Key::Enter
           open_detail(t)
           true
-        when Key::Char
+        when ::TUI::Key::Char
           case ev.char
           when '/'
             if @searchable_cols.empty?
@@ -200,21 +206,28 @@ module Prostore
         end
       end
 
+      def handle_click(local_row : Int32, local_col : Int32, scroll : ::TUI::ScrollControl) : Bool
+        i = local_row - 1 # header occupies row 0
+        return false unless i >= 0 && i < @rows.size
+        @cursor = i
+        true
+      end
+
       # Search-mode input handling.  Returns true for every key while the
       # input prompt is open so the keypress never bubbles to the app
       # (e.g. Esc must not also pop back to the table list).
-      private def handle_search_key(ev : KeyEvent) : Bool
+      private def handle_search_key(ev : ::TUI::KeyEvent) : Bool
         case ev.key
-        when Key::Esc, Key::Enter
+        when ::TUI::Key::Esc, ::TUI::Key::Enter
           @search_active = false
-        when Key::Backspace
+        when ::TUI::Key::Backspace
           unless @filter_term.empty?
             @filter_term = @filter_term[0, @filter_term.size - 1]
             @page = 0
             @cursor = 0
             reload
           end
-        when Key::Char
+        when ::TUI::Key::Char
           @filter_term += ev.char.to_s
           @page = 0
           @cursor = 0
@@ -246,16 +259,14 @@ module Prostore
 
       private def max_col_offset : Int32
         n = @col_names.size
-        inner_w = width - 2
-        max_visible = [(inner_w + 1) // (MIN_COL_WIDTH + 1), 1].max
-        [n - max_visible, 0].max
+        [n - 1, 0].max
       end
 
       private def build_row_str(cells : Array(String), widths : Array(Int32)) : String
         cells.each_with_index.map do |cell, i|
           w = widths[i]? || MIN_COL_WIDTH
-          Term.fit(cell, w)
-        end.join(Term::VL)
+          ::TUI::Term.fit(cell, w)
+        end.join(::TUI::Term::VL)
       end
 
       # Returns the PK value of the currently highlighted row, or nil.
@@ -268,6 +279,11 @@ module Prostore
         idx = @col_names.index(pk)
         return nil unless idx
         @rows[@cursor][idx]
+      end
+
+      # Pickable — used when this grid is wrapped as an FK picker.
+      def selected_value : String?
+        selected_pk
       end
 
       private def open_detail(table : String) : Nil

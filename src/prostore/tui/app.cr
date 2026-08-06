@@ -1,10 +1,6 @@
-require "./term"
-require "./keys"
-require "./screen"
-require "./widget"
+require "tui"
 require "./column_types"
 require "./style"
-require "./validation"
 require "./browser"
 require "./widgets/table_list"
 require "./widgets/record_grid"
@@ -12,20 +8,30 @@ require "./widgets/record_detail"
 
 module Prostore
   module TUI
-    # Each entry on the navigation stack captures enough data to rebuild the
-    # view when popping back to it.
-    private record NavTableList
-    private record NavRecordGrid, table : String
-    private record NavRecordDetail, table : String, pk_col : String, pk_val : String
-    private record NavNewRecord, table : String
-    # Holds a reference to the source detail widget so it can be restored without
-    # rebuilding from DB when the picker is dismissed.
-    private record NavFKPicker, fk_table : String, col_name : String, detail : RecordDetail
+    # Picker(W) needs a single Widget with both #handle_key(ev) and
+    # #selected_value — Window already provides the former (delegating to
+    # its Scrollable content) but knows nothing about Pickable, so this
+    # thin wrapper adds the latter for the one RecordGrid instance the FK
+    # picker flow needs it on.
+    private class PickerWindow < ::TUI::Window
+      include ::TUI::Pickable
 
-    private alias NavEntry = NavTableList | NavRecordGrid | NavRecordDetail | NavNewRecord | NavFKPicker
+      def initialize(x : Int32, y : Int32, width : Int32, height : Int32, @grid : RecordGrid)
+        super(x, y, width, height, @grid.as(::TUI::Scrollable))
+      end
+
+      def selected_value : String?
+        @grid.selected_value
+      end
+    end
 
     class App
       TABLE_LIST_WIDTH = 44
+
+      @quit_menu : ::TUI::KeyMenu
+      @sidebar_menu : ::TUI::KeyMenu
+      @fk_picker : ::TUI::Picker(PickerWindow)?
+      @sidebar_width : Int32 = TABLE_LIST_WIDTH
 
       def self.run(conn : Connection) : Nil
         new(conn).run
@@ -33,198 +39,131 @@ module Prostore
 
       def initialize(@conn : Connection)
         @browser = Browser.new(@conn)
-        @screen = Screen.new
-        @running = true
-        @stack = [NavTableList.new] of NavEntry
+        @screen = ::TUI::Screen.new
 
         rows = @screen.rows
         cols = @screen.cols
-        grid_w = cols - TABLE_LIST_WIDTH
 
-        @table_list = TableList.new(1, 1, TABLE_LIST_WIDTH, rows - 2, @browser)
-        @record_grid = RecordGrid.new(TABLE_LIST_WIDTH + 1, 1, grid_w, rows - 2, @browser)
-        @fk_picker = RecordGrid.new(1, 1, cols, rows - 2, @browser)
-        @record_detail = nil.as(RecordDetail?)
+        @table_list = TableList.new(@browser)
+        @record_grid = RecordGrid.new(@browser)
+        @split = ::TUI::SplitWindow.new(1, 1, cols, rows - 1,
+          @table_list.as(::TUI::Scrollable), @record_grid.as(::TUI::Scrollable), left_width: TABLE_LIST_WIDTH)
+
+        @nav = ::TUI::NavStack(::TUI::Widget).new(@split.as(::TUI::Widget))
+        @runtime = ::TUI::Runtime.new(@screen, @nav, ->(ev : ::TUI::KeyEvent) { handle_key(ev) })
+        @quit_menu = build_quit_menu
+        @sidebar_menu = build_sidebar_menu
+        refresh_sidebar_hint
 
         wire_table_list
         wire_record_grid
-        @table_list.focused = true
         @table_list.reload
       end
 
       def run : Nil
-        Term.enter_raw
-        begin
-          while @running
-            render
-            ev = Keys.read(STDIN)
-            handle_key(ev)
-          end
-        ensure
-          print Term.show_cursor
-          print Term.clear
-          STDOUT.flush
-          Term.exit_raw
-        end
+        @runtime.run
       end
 
-      private def current : NavEntry
-        @stack.last
+      private def build_quit_menu : ::TUI::KeyMenu
+        menu = ::TUI::KeyMenu.new
+        menu.bind('q', "q:quit", when: -> { !in_detail? }) { exit(0) }
+        menu
       end
 
-      private def push(entry : NavEntry) : Nil
-        @stack << entry
-        sync_detail
+      # Kept separate from #build_quit_menu so its hint (pushed into
+      # @split.extra_hint by #refresh_sidebar_hint) never has to be picked
+      # apart from "q:quit" — RecordGrid/TableList each show their own
+      # "q:quit" in their own #status_hint already, so #build_quit_menu's
+      # hint is dispatch-only and is never rendered anywhere (nothing calls
+      # @quit_menu.hint).
+      private def build_sidebar_menu : ::TUI::KeyMenu
+        menu = ::TUI::KeyMenu.new
+        menu.bind('h', -> { @split.left_width == 0 ? "h:show sidebar" : "h:hide sidebar" },
+          when: -> { !in_detail? }) { toggle_sidebar }
+        # While the sidebar is hidden, Tab has nothing on the left to switch
+        # into — SplitWindow's own Tab binding would just flip @active onto
+        # an invisible 0-width pane. Intercepting it here ahead of @split
+        # makes Tab double as "unhide" instead; once visible again, this
+        # binding's `when` goes false and SplitWindow's normal switch-pane
+        # Tab takes back over.
+        menu.bind(::TUI::Key::Tab, "Tab:show sidebar",
+          when: -> { !in_detail? && @split.left_width == 0 }) { show_sidebar }
+        menu
       end
 
-      # Pop one entry. After popping, rebuild the detail widget if the new top
-      # is itself a detail entry (so Esc through a chain of FK-follows works).
-      private def pop(reload_grid : Bool = false) : Nil
-        @stack.pop if @stack.size > 1
-        @record_grid.reload if reload_grid
-        sync_detail
-      end
-
-      private def sync_detail : Nil
-        case nav = current
-        when NavRecordDetail
-          @record_detail = build_detail(nav.table, nav.pk_col, nav.pk_val)
-        when NavNewRecord
-          @record_detail = build_new_record(nav.table)
-        when NavFKPicker
-          # Managed by push_fk_picker / pop_fk_picker — do not rebuild detail.
-          @record_detail = nil
+      # Collapses the table-list pane to width 0 (giving the grid the full
+      # screen) or restores it — SplitWindow has no built-in "hidden pane"
+      # concept, so this just drives left_width down to nothing rather than
+      # removing the pane. Hiding while the table list is focused moves
+      # focus to the grid first, since a 0-width pane can't usefully hold
+      # keyboard focus (nothing to see, nowhere for Tab to click into).
+      private def toggle_sidebar : Nil
+        if @split.left_width > 0
+          hide_sidebar
         else
-          @record_detail = nil
+          show_sidebar
         end
       end
 
-      private def render : Nil
-        case current
-        when NavFKPicker
-          @fk_picker.render(@screen)
-        when NavRecordDetail, NavNewRecord
-          @record_detail.try &.render(@screen)
-        else
-          @table_list.focused = current.is_a?(NavTableList)
-          @record_grid.focused = current.is_a?(NavRecordGrid)
-          @table_list.render(@screen)
-          render_divider
-          @record_grid.render(@screen)
-        end
-        render_status_bar
-        @screen.flush
+      private def hide_sidebar : Nil
+        @sidebar_width = @split.left_width
+        @split.focus_right
+        @split.left_width = 0
       end
 
-      private def render_divider : Nil
-        (2..@screen.rows - 3).each do |row|
-          @screen.at(row, TABLE_LIST_WIDTH + 1, Term::VL)
-        end
+      # Restores the remembered width and moves focus onto it — Tab-to-
+      # unhide should land the user where they were headed (the sidebar),
+      # not leave focus on the pane they were already on.
+      private def show_sidebar : Nil
+        @split.left_width = @sidebar_width
+        @split.focus_left
       end
 
-      private def render_status_bar : Nil
-        # Delegate to the focused widget — it knows its current state best.
-        # NavFKPicker is kept inline since the picker is a RecordGrid in a
-        # read-only role and its own `status_hint` would describe the
-        # mutation-friendly nav-mode bindings.
-        hint = case current
-               when NavTableList                  then @table_list.status_hint
-               when NavRecordGrid                 then @record_grid.status_hint
-               when NavRecordDetail, NavNewRecord then @record_detail.try(&.status_hint) || ""
-               when NavFKPicker
-                 " ESC:cancel  ↑↓:row  ←→:cols  Enter:select  PgUp/Dn:page"
-               else
-                 ""
-               end
-        @screen.status_bar(@screen.rows - 1, hint)
+      # SplitWindow renders its own #status_hint fresh every frame, but it
+      # only knows about its own Tab binding — the sidebar hide/show hint
+      # lives in @sidebar_menu instead (see #build_sidebar_menu), so it has
+      # to be pushed into @split.extra_hint explicitly. Called once up
+      # front (for the very first frame) and again after every #handle_key
+      # (see below), since @sidebar_menu's `when:` guards — and thus what
+      # the hint should say — can change from things #handle_key triggers
+      # (toggling the sidebar, entering/leaving detail view via Esc/Enter).
+      private def refresh_sidebar_hint : Nil
+        @split.extra_hint = @sidebar_menu.hint.strip
       end
 
-      private def handle_key(ev : KeyEvent) : Nil
-        in_detail = current.is_a?(NavRecordDetail) || current.is_a?(NavNewRecord) || current.is_a?(NavFKPicker)
+      # True while a RecordDetail (existing or new-record) or the FK picker is
+      # the active screen — 'q' must not quit out from under an in-progress
+      # edit or a modal pick.
+      private def in_detail? : Bool
+        @nav.current.is_a?(RecordDetail) || !@fk_picker.nil?
+      end
 
-        if ev.key == Key::CtrlC || (ev.key == Key::Char && ev.char == 'q' && !in_detail)
-          @running = false
+      private def handle_key(ev : ::TUI::KeyEvent) : Nil
+        if picker = @fk_picker
+          # Picker itself never pops the nav stack (it has no Runtime
+          # reference) — on_pick/on_cancel (below) do that explicitly once
+          # they've resolved the pick.
+          picker.handle_key(ev)
           return
         end
 
-        case current
-        when NavFKPicker                   then handle_fk_picker_key(ev)
-        when NavTableList                  then handle_table_list_key(ev)
-        when NavRecordGrid                 then handle_record_grid_key(ev)
-        when NavRecordDetail, NavNewRecord then handle_detail_key(ev)
-        end
-      end
+        current = @nav.current
 
-      private def handle_fk_picker_key(ev : KeyEvent) : Nil
-        if ev.key == Key::Esc
-          pop_fk_picker(nil)
-        elsif ev.key == Key::Enter
-          pop_fk_picker(@fk_picker.selected_pk)
-        elsif ev.key == Key::Char && (ev.char == 'd' || ev.char == 'n')
-          nil # read-only picker — suppress mutations
-        else
-          @fk_picker.handle_key(ev)
+        if ev.key == ::TUI::Key::Esc
+          @runtime.handle_esc(current.handle_key(ev)) { @split.focus_left }
+          refresh_sidebar_hint
+          return
         end
-      end
 
-      private def handle_table_list_key(ev : KeyEvent) : Nil
-        if ev.key == Key::Enter
-          table = @table_list.selected_table
-          if table
-            @record_grid.load_table(table) if @record_grid.table != table
-            push NavRecordGrid.new(table)
-          end
-        else
-          @table_list.handle_key(ev)
-        end
-      end
-
-      private def handle_record_grid_key(ev : KeyEvent) : Nil
-        if ev.key == Key::Esc
-          # Delegate first — the grid consumes Esc while its search input
-          # is open so we don't accidentally pop back to the table list.
-          consumed = @record_grid.handle_key(ev)
-          pop unless consumed
-        else
-          @record_grid.handle_key(ev)
-        end
-      end
-
-      private def handle_detail_key(ev : KeyEvent) : Nil
-        if ev.key == Key::Esc
-          # Delegate to detail first — if it's in edit mode, Esc cancels the
-          # edit and the detail stays open. Only pop when not editing.
-          consumed = @record_detail.try &.handle_key(ev)
-          pop unless consumed
-        else
-          @record_detail.try &.handle_key(ev)
-        end
-      end
-
-      # Push the FK picker without going through sync_detail so the source
-      # detail widget's unsaved edits are preserved.
-      private def push_fk_picker(fk_table : String, col_name : String, source : RecordDetail) : Nil
-        @fk_picker.load_table(fk_table)
-        @fk_picker.focused = true
-        @stack << NavFKPicker.new(fk_table, col_name, source)
-        @record_detail = nil
-      end
-
-      # Pop the FK picker and restore the source detail widget.  If a PK value
-      # was selected, write it directly into the source row before restoring.
-      private def pop_fk_picker(selected_pk : String?) : Nil
-        nav = current
-        return unless nav.is_a?(NavFKPicker)
-        @stack.pop if @stack.size > 1
-        if pk = selected_pk
-          nav.detail.set_row_value(nav.col_name, pk)
-        end
-        @record_detail = nav.detail
+        consumed = @quit_menu.dispatch(ev) || @sidebar_menu.dispatch(ev)
+        current.handle_key(ev) unless consumed
+        refresh_sidebar_hint
       end
 
       private def wire_table_list : Nil
-        @table_list.on_select = ->(t : String) {
-          @record_grid.load_table(t) if @record_grid.table != t
+        @table_list.on_activate = ->(_index : Int32) {
+          t = @table_list.selected_table
+          @record_grid.load_table(t) if t && @record_grid.table != t
           nil
         }
       end
@@ -232,53 +171,73 @@ module Prostore
       private def wire_record_grid : Nil
         @record_grid.on_open_detail = ->(t : String, pk_val : String) {
           pk = @browser.pk_col(t)
-          if pk
-            push NavRecordDetail.new(t, pk, pk_val)
-          end
+          push_detail(t, pk, pk_val) if pk
           nil
         }
 
         @record_grid.on_new_row = ->(t : String) {
-          push NavNewRecord.new(t)
+          push_new_record(t)
           nil
         }
       end
 
-      private def build_detail(table : String, pk_col : String, pk_val : String) : RecordDetail
-        ov = RecordDetail.new(1, 1, @screen.cols, @screen.rows - 2,
-          @browser, table, pk_col, pk_val)
-        wire_detail(ov)
-        ov
+      private def push_detail(table : String, pk_col : String, pk_val : String) : Nil
+        detail = RecordDetail.new(1, 1, 1, 1, @browser, table, pk_col, pk_val)
+        wire_detail(detail)
+        @runtime.push(detail.as(::TUI::Widget))
       end
 
-      private def build_new_record(table : String) : RecordDetail
-        ov = RecordDetail.for_new_record(1, 1, @screen.cols, @screen.rows - 2,
-          @browser, table)
-        wire_detail(ov)
-        ov
+      private def push_new_record(table : String) : Nil
+        detail = RecordDetail.for_new_record(1, 1, 1, 1, @browser, table)
+        wire_detail(detail)
+        @runtime.push(detail.as(::TUI::Widget))
       end
 
-      private def wire_detail(ov : RecordDetail) : Nil
+      private def wire_detail(detail : RecordDetail) : Nil
         # Called after a successful insert or delete — pop and refresh the grid.
-        ov.on_close = -> {
-          pop(reload_grid: true)
+        detail.on_close = -> {
+          @runtime.pop
+          @record_grid.reload
           nil
         }
 
         # Follow an FK: push a new detail onto the stack without closing this one.
-        ov.on_follow_fk = ->(ref_table : String, ref_val : String) {
+        detail.on_follow_fk = ->(ref_table : String, ref_val : String) {
           ref_pk = @browser.pk_col(ref_table)
-          if ref_pk
-            push NavRecordDetail.new(ref_table, ref_pk, ref_val)
-          end
+          push_detail(ref_table, ref_pk, ref_val) if ref_pk
           nil
         }
 
-        # Browse an FK table to pick a value; restores this detail on return.
-        ov.on_pick_fk = ->(fk_table : String, col_name : String) {
-          push_fk_picker(fk_table, col_name, ov)
+        # Browse an FK table to pick a value; writes it back into this
+        # detail's row and restores the detail (still on the nav stack,
+        # untouched) once the picker resolves.
+        detail.on_pick_fk = ->(fk_table : String, col_name : String) {
+          push_fk_picker(fk_table, col_name, detail)
           nil
         }
+      end
+
+      private def push_fk_picker(fk_table : String, col_name : String, source : RecordDetail) : Nil
+        picker_grid = RecordGrid.new(@browser)
+        picker_grid.load_table(fk_table)
+        picker_grid.focused = true
+        picker_window = PickerWindow.new(1, 1, @screen.cols, @screen.rows - 1, picker_grid)
+        @runtime.push(picker_window.as(::TUI::Widget))
+        @fk_picker = ::TUI::Picker(PickerWindow).new(
+          picker_window,
+          ->(pk : String) {
+            source.set_row_value(col_name, pk)
+            @fk_picker = nil
+            @runtime.pop
+            nil
+          },
+          -> {
+            @fk_picker = nil
+            @runtime.pop
+            nil
+          },
+          suppress: ['n', 'd'],
+        )
       end
     end
   end

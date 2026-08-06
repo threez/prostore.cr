@@ -1,5 +1,5 @@
 name: prostore
-version: 0.4.2
+version: 0.5.0
 
 authors:
   - Vincent Landgraf <vincent@landgrafx.de>
@@ -19,6 +19,9 @@ dependencies:
   pg:
     github: will/crystal-pg
     version: ~> 0.30
+  tui:
+    github: threez/tui.cr
+    version: ~> 0.5.0
 
 development_dependencies:
   ameba:

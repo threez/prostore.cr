@@ -1,15 +1,25 @@
-require "../widget"
+require "tui"
 require "../browser"
 require "../style"
 require "../column_types"
-require "../validation"
 
 module Prostore
   module TUI
-    class RecordDetail < Widget
+    class RecordDetail < ::TUI::Widget
       property on_close : Proc(Nil)?
       property on_follow_fk : Proc(String, String, Nil)?
       property on_pick_fk : Proc(String, String, Nil)?
+
+      # Column names mutated since the last load/reload — also useful to an
+      # embedding app deciding whether to prompt before discarding an
+      # in-progress edit, not just for spec assertions.
+      getter dirty : Set(String)
+
+      # Per-column inline validation error messages, keyed by column name.
+      getter field_errors : Hash(String, String)
+
+      # The current in-memory row (raw stringified values, pre-save).
+      getter row : Hash(String, RowVal)
 
       def initialize(x : Int32, y : Int32, width : Int32, height : Int32,
                      @browser : Browser, @table : String, @pk_col : String?,
@@ -22,15 +32,11 @@ module Prostore
         @enum_columns = @browser.enum_columns(@table)
         @cursor = 0       # focused field index
         @field_scroll = 0 # display-row offset for the field list
-        @editing = false
-        @edit_lines = [] of String
-        @edit_row = 0 # cursor line within @edit_lines
-        @edit_col = 0 # cursor column within current line
-        @bool_editing = false
-        @bool_pending = false
-        @enum_editing = false           # radio picker for plain enums
-        @enum_pending_index = 0         # which member is currently selected
-        @enum_focus = 0                 # which member the cursor is highlighting
+        @text_editor = nil.as(::TUI::ScrollableField(::TUI::TextEdit)?)
+        @input_editor = nil.as(::TUI::InputField?)
+        @bool_editor = nil.as(::TUI::BoolField?)
+        @enum_editor = nil.as(::TUI::EnumField?)
+        @enum_focus = 0                 # which member the cursor is highlighting (flags only)
         @flags_editing = false          # checkbox picker for @[Flags] enums
         @flags_pending = Set(Int32).new # indices of currently-selected members
         @field_errors = {} of String => String
@@ -71,9 +77,9 @@ module Prostore
         @dirty << col_name
       end
 
-      def render(screen : Screen) : Nil
+      def render : Nil
         title = @is_new ? "New · #{@table}" : "#{@table} · #{pk_display}"
-        screen.box(y, x, height, width, title)
+        @buffer.box(0, 0, height, width, title)
 
         inner_w = width - 2
         max_name = @schema.columns.max_of?(&.name.size) || 8
@@ -89,8 +95,8 @@ module Prostore
           lines = field_lines(col, fi)
 
           lines.each_with_index do |line_content, li|
-            screen_row = y + 1 + start + li
-            next if screen_row < y + 1 || screen_row >= y + height - 1
+            local_row = 1 + start + li
+            next if local_row < 1 || local_row >= height - 1
 
             dirty = @dirty.includes?(col.name)
             if li == 0
@@ -101,9 +107,9 @@ module Prostore
                         else
                           " "
                         end
-              raw_label = Term.fit("#{pointer} #{col.name}", label_w)
-              label = dirty ? Term.bold(raw_label) : raw_label
-              pk_tag = col.primary ? Term.dim(" [pk]") : ""
+              raw_label = ::TUI::Term.fit("#{pointer} #{col.name}", label_w)
+              label = dirty ? ::TUI::Term.bold(raw_label) : raw_label
+              pk_tag = col.primary ? ::TUI::Term.dim(" [pk]") : ""
               fk_hint = fk_for_col(col.name)
               fk_label = fk_hint ? Style.fk_ref("  → #{fk_hint.references_table}") : ""
             else
@@ -112,31 +118,33 @@ module Prostore
               fk_label = ""
             end
 
-            val_display = Term.fit(line_content, val_w - Term.visible_size(pk_tag) - Term.visible_size(fk_label))
+            val_display = ::TUI::Term.fit(line_content, val_w - ::TUI::Term.visible_size(pk_tag) - ::TUI::Term.visible_size(fk_label))
             line = "#{label} #{val_display}#{pk_tag}#{fk_label}"
 
-            if fi == @cursor && !@editing && !@bool_editing && !@enum_editing && !@flags_editing
+            if fi == @cursor && !@text_editor && !@input_editor && !@bool_editor && !@enum_editor && !@flags_editing
               # Strip inner ANSI before applying reverse — otherwise the first
               # `\e[0m` from a colour segment cancels the reverse video mid-row.
-              plain = Term.fit(Term.strip_ansi(line), inner_w)
-              styled = dirty ? Term.bold(Term.reverse(plain)) : Term.reverse(plain)
-              screen.at(screen_row, x + 1, styled)
+              plain = ::TUI::Term.fit(::TUI::Term.strip_ansi(line), inner_w)
+              styled = dirty ? ::TUI::Term.bold(::TUI::Term.reverse(plain)) : ::TUI::Term.reverse(plain)
+              @buffer.set(local_row, 1, styled)
             else
-              screen.at(screen_row, x + 1, Term.fit(line, inner_w))
+              @buffer.set(local_row, 1, ::TUI::Term.fit(line, inner_w))
             end
           end
         end
       end
 
-      def handle_key(ev : KeyEvent) : Bool
-        if @bool_editing
+      def handle_key(ev : ::TUI::KeyEvent) : Bool
+        if @bool_editor
           handle_bool_edit_key(ev)
-        elsif @enum_editing
+        elsif @enum_editor
           handle_enum_edit_key(ev)
         elsif @flags_editing
           handle_flags_edit_key(ev)
-        elsif @editing
-          handle_edit_key(ev)
+        elsif @text_editor
+          handle_text_edit_key(ev)
+        elsif @input_editor
+          handle_input_edit_key(ev)
         else
           handle_nav_key(ev)
         end
@@ -144,89 +152,66 @@ module Prostore
 
       # ---------------------------------------------------------------- private
 
-      private def handle_bool_edit_key(ev : KeyEvent) : Bool
+      # BoolField has no Up/Down-moves-to-next-field gesture of its own
+      # (only Left/Right/Space toggle, Esc/Enter commit) — Up/Down here
+      # mirror the surrounding nav keys' "commit then move" behavior that
+      # existed before this delegated to BoolField.
+      private def handle_bool_edit_key(ev : ::TUI::KeyEvent) : Bool
+        editor = @bool_editor
+        return false unless editor
         case ev.key
-        when Key::Esc, Key::Enter
-          commit_bool_edit
-          true
-        when Key::Left, Key::Right
-          @bool_pending = !@bool_pending
-          true
-        when Key::Up
+        when ::TUI::Key::Up
           commit_bool_edit
           move_cursor(-1)
           true
-        when Key::Down
+        when ::TUI::Key::Down
           commit_bool_edit
           move_cursor(1)
           true
-        when Key::Char
-          case ev.char
-          when ' '
-            @bool_pending = !@bool_pending
-            true
-          else
-            false
-          end
         else
-          false
+          result = editor.handle_key(ev)
+          commit_bool_edit if result == :commit
+          true
         end
       end
 
-      # Radio picker for plain (non-flags) enums.  ↑/↓ moves the focused
-      # member, Space/Enter selects it and commits, Esc cancels without
-      # writing back.
-      private def handle_enum_edit_key(ev : KeyEvent) : Bool
-        info = current_enum_info
-        return false if info.nil?
-        case ev.key
-        when Key::Esc
-          cancel_enum_edit
-          true
-        when Key::Enter
-          @enum_pending_index = @enum_focus
+      # Radio picker for plain (non-flags) enums, delegated to
+      # ::TUI::EnumField — ↑/↓ moves the focused member, Space/Enter
+      # selects it and commits, Esc cancels without writing back
+      # (EnumField's own semantics, unchanged from the bespoke version).
+      private def handle_enum_edit_key(ev : ::TUI::KeyEvent) : Bool
+        editor = @enum_editor
+        return false unless editor
+        result = editor.handle_key(ev)
+        case result
+        when :commit
           commit_enum_edit
-          true
-        when Key::Up
-          @enum_focus = (@enum_focus - 1).clamp(0, info.members.size - 1)
-          true
-        when Key::Down
-          @enum_focus = (@enum_focus + 1).clamp(0, info.members.size - 1)
-          true
-        when Key::Char
-          case ev.char
-          when ' '
-            @enum_pending_index = @enum_focus
-            commit_enum_edit
-            true
-          else
-            false
-          end
-        else
-          false
+        when :cancel
+          cancel_enum_edit
         end
+        true
       end
 
       # Checkbox picker for @[Flags] enums.  ↑/↓ moves the focused member,
       # Space toggles its membership in the pending set, Enter commits the
       # bitwise OR, Esc cancels.
-      private def handle_flags_edit_key(ev : KeyEvent) : Bool
+      private def handle_flags_edit_key(ev : ::TUI::KeyEvent) : Bool
         info = current_enum_info
         return false if info.nil?
         case ev.key
-        when Key::Esc
+        when ::TUI::Key::Esc
           cancel_flags_edit
           true
-        when Key::Enter
+        when ::TUI::Key::Enter
           commit_flags_edit
           true
-        when Key::Up
+        when ::TUI::Key::Up
           @enum_focus = (@enum_focus - 1).clamp(0, info.members.size - 1)
           true
-        when Key::Down
+        when ::TUI::Key::Down
           @enum_focus = (@enum_focus + 1).clamp(0, info.members.size - 1)
           true
-        when Key::Char
+        when ::TUI::Key::Char
           case ev.char
           when ' '
             if @flags_pending.includes?(@enum_focus)
@@ -243,79 +228,39 @@ module Prostore
         end
       end
 
-      private def handle_edit_key(ev : KeyEvent) : Bool
-        case ev.key
-        when Key::Esc
-          commit_edit
-          true # consumed — app will not pop the stack
-        when Key::Enter
-          insert_newline
-          true
-        when Key::Backspace
-          edit_backspace
-          true
-        when Key::Delete
-          edit_delete
-          true
-        when Key::Left
-          edit_move_left
-          true
-        when Key::Right
-          edit_move_right
-          true
-        when Key::Up
-          if @edit_row > 0
-            @edit_row -= 1
-            @edit_col = [@edit_col, @edit_lines[@edit_row].size].min
-          else
-            commit_edit
-            move_cursor(-1)
-          end
-          true
-        when Key::Down
-          if @edit_row < @edit_lines.size - 1
-            @edit_row += 1
-            @edit_col = [@edit_col, @edit_lines[@edit_row].size].min
-          else
-            commit_edit
-            move_cursor(1)
-          end
-          true
-        when Key::Home
-          @edit_col = 0
-          true
-        when Key::End
-          @edit_col = @edit_lines[@edit_row].size
-          true
-        when Key::Tab
-          col = current_col
-          fk = col ? fk_for_col(col.name) : nil
-          if fk && col && fk.columns.size == 1
-            cancel_edit
-            @on_pick_fk.try &.call(fk.references_table, col.name)
-            true
-          else
-            false
-          end
-        when Key::Char
-          line = @edit_lines[@edit_row]
-          @edit_lines[@edit_row] = line[0...@edit_col] + ev.char.to_s + (line[@edit_col..]? || "")
-          @edit_col += 1
-          true
-        else
-          false
-        end
+      # TUI::TextEdit's own Up/Down move the cursor within the buffer (no
+      # commit-and-move-field gesture, unlike the old bespoke editor) —
+      # Esc commits and returns to nav mode; from there Up/Down move
+      # fields as usual. No Tab/FK hand-off here: #start_edit routes
+      # single-column FK fields straight to the picker, so a TextEdit is
+      # never open on one.
+      private def handle_text_edit_key(ev : ::TUI::KeyEvent) : Bool
+        editor = @text_editor
+        return false unless editor
+        result = editor.handle_key(ev)
+        commit_edit if result == :commit
+        true
       end
 
-      private def handle_nav_key(ev : KeyEvent) : Bool
+      # Single-line InputField used by numeric columns. Same no-FK
+      # rationale as #handle_text_edit_key above.
+      private def handle_input_edit_key(ev : ::TUI::KeyEvent) : Bool
+        editor = @input_editor
+        return false unless editor
+        result = editor.handle_key(ev)
+        commit_input_edit if result == :commit
+        true
+      end
+
+      private def handle_nav_key(ev : ::TUI::KeyEvent) : Bool
         case ev.key
-        when Key::Up
+        when ::TUI::Key::Up
           move_cursor(-1)
           true
-        when Key::Down
+        when ::TUI::Key::Down
           move_cursor(1)
           true
-        when Key::Tab
+        when ::TUI::Key::Tab
           col = current_col
           fk = col ? fk_for_col(col.name) : nil
           if fk && col && fk.columns.size == 1
@@ -324,7 +269,7 @@ module Prostore
           else
             false
           end
-        when Key::Char
+        when ::TUI::Key::Char
           case ev.char
           when 'e'
             start_edit
@@ -356,45 +301,76 @@ module Prostore
         return unless col
         return if col.primary && !@is_new
         @field_errors.delete(col.name)
-        if info = @enum_columns[col.name]?
+        fk = fk_for_col(col.name)
+        if fk && fk.columns.size == 1
+          # A single-column FK is better edited by picking a row from the
+          # referenced table than by typing its raw PK — hand off to the
+          # same picker Tab already opens, rather than opening a local
+          # editor for the underlying int/string column.
+          @on_pick_fk.try &.call(fk.references_table, col.name)
+        elsif info = @enum_columns[col.name]?
           if info.is_flags
             @flags_pending = decode_flags_indices(@row[col.name]?, info)
             @enum_focus = 0
             @flags_editing = true
           else
-            @enum_pending_index = decode_enum_index(@row[col.name]?, info,
-              @portable_types[col.name]?)
-            @enum_focus = @enum_pending_index
-            @enum_editing = true
+            use_wire = (@portable_types[col.name]? == "enum_string")
+            options = info.members.map { |member|
+              ::TUI::FormEnumOption.new(
+                label: use_wire ? member.wire_name : member.name,
+                wire_value: enum_wire_value(member, @portable_types[col.name]?))
+            }
+            editor = ::TUI::EnumField.new(options)
+            editor.start(@row[col.name]? || "")
+            @enum_editor = editor
           end
         elsif ColumnTypes.bool?(@portable_types[col.name]?, col.type_text)
-          @bool_pending = ColumnTypes.bool_truthy?(@row[col.name]?)
-          @bool_editing = true
+          editor = ::TUI::BoolField.new
+          editor.start(ColumnTypes.bool_truthy?(@row[col.name]?) ? "true" : "false")
+          @bool_editor = editor
+        elsif ColumnTypes.numeric?(@portable_types[col.name]?, col.type_text)
+          editor = ::TUI::InputField.new
+          editor.start(@row[col.name]? || "")
+          @input_editor = editor
         else
-          val = @row[col.name]?
-          raw = val || ""
-          @edit_lines = raw.split('\n')
-          @edit_lines << "" if @edit_lines.empty?
-          @edit_row = @edit_lines.size - 1
-          @edit_col = @edit_lines[@edit_row].size
-          @editing = true
+          editor = ::TUI::ScrollableField(::TUI::TextEdit).new(->(v : String) { ::TUI::TextEdit.new(v) })
+          editor.start(@row[col.name]? || "")
+          # TextEdit.new always starts the cursor at (0, 0) — move it to
+          # the end of the buffer so typing/backspace continues where the
+          # old bespoke editor (which started at the end) left off. Down
+          # is a no-op past the last visual row, so this unconditionally
+          # reaches the last line without knowing the line count up front.
+          value = @row[col.name]? || ""
+          value.count('\n').times { editor.handle_key(::TUI::KeyEvent.new(::TUI::Key::Down)) }
+          editor.handle_key(::TUI::KeyEvent.new(::TUI::Key::End))
+          @text_editor = editor
         end
       end
 
       private def commit_edit : Nil
         col = current_col
-        return unless col
-        value = @edit_lines.join('\n')
+        editor = @text_editor
+        return unless col && editor
+        value = editor.value
         # An empty edit on a nullable column means NULL, not the literal
         # empty string — otherwise the column would be coerced to "" on save
         # and the display would lose the (null) marker.
         @row[col.name] = (value.empty? && col.nullable) ? nil : value
         @dirty << col.name
         validate_edit(col, value)
-        @editing = false
-        @edit_lines.clear
-        @edit_row = 0
-        @edit_col = 0
+        @text_editor = nil
+      end
+
+      private def commit_input_edit : Nil
+        col = current_col
+        editor = @input_editor
+        return unless col && editor
+        value = editor.value
+        # Same NULL-on-empty rule as #commit_edit.
+        @row[col.name] = (value.empty? && col.nullable) ? nil : value
+        @dirty << col.name
+        validate_edit(col, value)
+        @input_editor = nil
       end
 
       # Run portable-type-driven validation on the just-committed value and
@@ -407,14 +383,14 @@ module Prostore
           return
         end
         if ColumnTypes.time?(pt, col.type_text)
-          set_error(col, Validation.valid_time?(value),
+          set_error(col, ::TUI::Validation.valid_time?(value),
             "invalid time — expected YYYY-MM-DD HH:MM:SS")
         elsif ColumnTypes.int?(pt, col.type_text)
-          set_error(col, Validation.valid_int?(value), "invalid integer")
+          set_error(col, ::TUI::Validation.valid_int?(value), "invalid integer")
         elsif ColumnTypes.float?(pt, col.type_text)
-          set_error(col, Validation.valid_float?(value), "invalid number")
+          set_error(col, ::TUI::Validation.valid_float?(value), "invalid number")
         elsif ColumnTypes.decimal?(pt, col.type_text)
-          set_error(col, Validation.valid_decimal?(value), "invalid decimal")
+          set_error(col, ::TUI::Validation.valid_decimal?(value), "invalid decimal")
         else
           @field_errors.delete(col.name)
         end
@@ -430,32 +406,38 @@ module Prostore
 
       private def commit_bool_edit : Nil
         col = current_col
-        return unless col
-        @row[col.name] = @bool_pending ? "true" : "false"
+        editor = @bool_editor
+        return unless col && editor
+        @row[col.name] = editor.value
         @dirty << col.name
-        @bool_editing = false
+        @bool_editor = nil
       end
 
       private def commit_enum_edit : Nil
         col = current_col
-        return unless col
-        info = @enum_columns[col.name]?
-        return unless info
-        member = info.members[@enum_pending_index]?
-        return unless member
-        pt = @portable_types[col.name]?
-        # For enum_string columns the storage value is the wire form
-        # (ADR-0017) — the picker displays member.name to the user but
-        # writes member.wire_name to the row so reads/writes round-trip
-        # under custom `naming:` algorithms.
-        @row[col.name] = (pt == "enum_int") ? member.value.to_s : member.wire_name
+        editor = @enum_editor
+        return unless col && editor
+        # editor.value is the FormEnumOption's wire_value — already built
+        # as the wire form (wire_name for enum_string, value.to_s for
+        # enum_int; see #enum_wire_value/ADR-0017) as of #start_edit, so
+        # it round-trips into @row directly with no further translation.
+        @row[col.name] = editor.value
         @dirty << col.name
         @field_errors.delete(col.name)
-        @enum_editing = false
+        @enum_editor = nil
       end
 
       private def cancel_enum_edit : Nil
-        @enum_editing = false
+        @enum_editor = nil
+      end
+
+      # The wire form a picked enum member writes back into @row: for
+      # enum_string columns this is the wire_name (ADR-0017, so reads/
+      # writes round-trip under custom `naming:` algorithms); for
+      # enum_int it's the underlying integer, stringified since
+      # FormEnumOption#wire_value is always a String.
+      private def enum_wire_value(member : Schema::EnumMember, portable_type : String?) : String
+        portable_type == "enum_int" ? member.value.to_s : member.wire_name
       end
 
       private def commit_flags_edit : Nil
@@ -483,25 +465,6 @@ module Prostore
         col ? @enum_columns[col.name]? : nil
       end
 
-      # Find the member index that matches the stored raw value.
-      # For `enum_string` we compare by member wire_name (the stored form
-      # under ADR-0017's naming algorithms); for `enum_int` by the
-      # underlying integer. Returns 0 on no match so the picker always lands
-      # on a defined member rather than a phantom index.
-      private def decode_enum_index(raw : String?, info : EnumColumn,
-                                    portable_type : String?) : Int32
-        return 0 if raw.nil?
-        if portable_type == "enum_int"
-          parsed = raw.to_i64?
-          return 0 if parsed.nil?
-          idx = info.members.index { |member| member.value == parsed }
-          idx || 0
-        else
-          idx = info.members.index { |member| member.wire_name == raw }
-          idx || 0
-        end
-      end
-
       # For a stored bitmask, return the indices of members whose underlying
       # value is fully contained in the mask (`(mask & m.value) == m.value`).
       # Zero-valued members (e.g. `None = 0`) are intentionally excluded —
@@ -516,67 +479,6 @@ module Prostore
           result << index if (mask & member.value) == member.value
         end
         result
-      end
-
-      private def cancel_edit : Nil
-        @editing = false
-        @edit_lines.clear
-        @edit_row = 0
-        @edit_col = 0
-      end
-
-      private def insert_newline : Nil
-        line = @edit_lines[@edit_row]
-        left = line[0...@edit_col]
-        right = line[@edit_col..]? || ""
-        @edit_lines[@edit_row] = left
-        @edit_lines.insert(@edit_row + 1, right)
-        @edit_row += 1
-        @edit_col = 0
-      end
-
-      private def edit_backspace : Nil
-        if @edit_col > 0
-          line = @edit_lines[@edit_row]
-          @edit_lines[@edit_row] = line[0...(@edit_col - 1)] + (line[@edit_col..]? || "")
-          @edit_col -= 1
-        elsif @edit_row > 0
-          prev = @edit_lines[@edit_row - 1]
-          curr = @edit_lines[@edit_row]
-          @edit_col = prev.size
-          @edit_lines[@edit_row - 1] = prev + curr
-          @edit_lines.delete_at(@edit_row)
-          @edit_row -= 1
-        end
-      end
-
-      private def edit_delete : Nil
-        line = @edit_lines[@edit_row]
-        if @edit_col < line.size
-          @edit_lines[@edit_row] = line[0...@edit_col] + (line[(@edit_col + 1)..]? || "")
-        elsif @edit_row < @edit_lines.size - 1
-          @edit_lines[@edit_row] = line + @edit_lines[@edit_row + 1]
-          @edit_lines.delete_at(@edit_row + 1)
-        end
-      end
-
-      private def edit_move_left : Nil
-        if @edit_col > 0
-          @edit_col -= 1
-        elsif @edit_row > 0
-          @edit_row -= 1
-          @edit_col = @edit_lines[@edit_row].size
-        end
-      end
-
-      private def edit_move_right : Nil
-        line = @edit_lines[@edit_row]
-        if @edit_col < line.size
-          @edit_col += 1
-        elsif @edit_row < @edit_lines.size - 1
-          @edit_row += 1
-          @edit_col = 0
-        end
       end
 
       # ---------------------------------------------------------------- scroll / layout
@@ -604,92 +506,140 @@ module Prostore
         @field_scroll = [@field_scroll, 0].max
       end
 
+      # Ceiling on how many display rows an open text editor may claim —
+      # ScrollableField owns its own internal Scroller/scrollbar, so a
+      # value longer than this just scrolls inside a fixed-height window
+      # instead of growing the field indefinitely (unlike the old bespoke
+      # editor, which sized itself to the full wrapped line count).
+      TEXT_EDIT_MAX_ROWS = 8
+
       private def field_row_count(col : Adapter::LiveColumn, fi : Int32) : Int32
         vw = compute_val_w
-        if @bool_editing && fi == @cursor
+        if (@bool_editor || @input_editor) && fi == @cursor
           1
-        elsif (@enum_editing || @flags_editing) && fi == @cursor
+        elsif (@enum_editor || @flags_editing) && fi == @cursor
           info = @enum_columns[col.name]?
           info ? [info.members.size, 1].max : 1
-        elsif @editing && fi == @cursor
-          count = @edit_lines.each_with_index.sum do |text, li|
-            soft_wrap(li == @edit_row ? text + "█" : text, vw).size
-          end
-          [count, 1].max
+        elsif @text_editor && fi == @cursor
+          text_edit_row_count(col, vw)
         else
           val = @row[col.name]?
           val.nil? ? 1 : [val.split('\n').sum { |ln| soft_wrap(ln, vw).size }, 1].max
         end
       end
 
+      # Sized off the pre-edit value's own wrapped row count (clamped to
+      # TEXT_EDIT_MAX_ROWS) rather than TextEdit's live content_size —
+      # ScrollableField doesn't expose the wrapped TextEdit it owns, so
+      # there's no live row count to query; this reserves a reasonable
+      # window instead and lets ScrollableField's own scrollbar handle
+      # whatever doesn't fit (including new lines typed after opening).
+      private def text_edit_row_count(col : Adapter::LiveColumn, vw : Int32) : Int32
+        val = @row[col.name]?
+        raw_count = val.nil? ? 1 : [val.split('\n').sum { |ln| soft_wrap(ln, vw).size }, 1].max
+        raw_count.clamp(1, TEXT_EDIT_MAX_ROWS)
+      end
+
       # Returns the display lines for a field (without label prefix).
-      # Long logical lines are soft-wrapped; non-final segments end with Term.wrap_cont.
+      # Long logical lines are soft-wrapped; non-final segments end with ::TUI::Term.wrap_cont.
       private def field_lines(col : Adapter::LiveColumn, fi : Int32) : Array(String)
-        if @bool_editing && fi == @cursor
-          bool_picker_lines
-        elsif @enum_editing && fi == @cursor
-          enum_picker_lines(col, radio: true)
+        if (editor = @bool_editor) && fi == @cursor
+          bool_picker_lines(editor)
+        elsif (editor = @enum_editor) && fi == @cursor
+          enum_field_lines(editor)
         elsif @flags_editing && fi == @cursor
-          enum_picker_lines(col, radio: false)
-        elsif @editing && fi == @cursor
-          editor_lines
+          flags_picker_lines(col)
+        elsif (editor = @text_editor) && fi == @cursor
+          text_editor_lines(editor, col)
+        elsif (editor = @input_editor) && fi == @cursor
+          input_editor_lines(editor)
         else
           display_lines(col)
         end
       end
 
-      private def bool_picker_lines : Array(String)
-        yes_part = @bool_pending ? "◉ yes" : "○ yes"
-        no_part = @bool_pending ? "○ no" : "◉ no"
-        ["#{yes_part}   #{no_part}"]
+      # BoolField renders into a Buffer at an explicit (y, x), not as a
+      # plain string — render into a scratch single-row Buffer here and
+      # read the cells back out as a string, so this still fits
+      # field_lines's uniform Array(String) contract shared by every other
+      # edit kind's *_lines method.
+      private def bool_picker_lines(editor : ::TUI::BoolField) : Array(String)
+        scratch = ::TUI::Buffer.new(compute_val_w, 1)
+        editor.render(scratch, 0, 0, scratch.width)
+        line = String.build do |str|
+          scratch.width.times { |col| str << scratch.cell(0, col).char }
+        end
+        [line.rstrip]
       end
 
-      # Render the vertical picker for either the enum radio (`radio: true`)
-      # or the flags checkbox (`radio: false`). Both share layout — the only
-      # difference is the marker glyph and which set drives the highlight.
+      # InputField renders into a Buffer at an explicit (y, x) like
+      # BoolField — same scratch-buffer technique as #bool_picker_lines.
+      private def input_editor_lines(editor : ::TUI::InputField) : Array(String)
+        scratch = ::TUI::Buffer.new(compute_val_w, 1)
+        editor.render(scratch, 0, 0, scratch.width)
+        line = String.build do |str|
+          scratch.width.times { |col| str << scratch.cell(0, col).char }
+        end
+        [line.rstrip]
+      end
+
+      # EnumField renders into a Buffer at an explicit (y, x) like
+      # BoolField, but multi-row (one option per row) — build a scratch
+      # buffer tall enough for every option and read each row back out,
+      # same technique as #bool_picker_lines just not single-row.
+      private def enum_field_lines(editor : ::TUI::EnumField) : Array(String)
+        info = current_enum_info
+        return [::TUI::Term.dim("(no members)")] if info.nil? || info.members.empty?
+        height = info.members.size
+        scratch = ::TUI::Buffer.new(compute_val_w, height)
+        editor.render(scratch, 0, 0, scratch.width, height)
+        height.times.map do |row|
+          String.build do |str|
+            scratch.width.times { |sc| str << scratch.cell(row, sc).char }
+          end.rstrip
+        end.to_a
+      end
+
+      # Render the vertical checkbox picker for @[Flags] enums — kept
+      # bespoke (see README) since TUI::FlagsField composes its bitmask
+      # by array index rather than the member's actual declared value,
+      # which would silently corrupt non-contiguous flag sets.
       #
-      # For enum_string columns we label each row with the wire_name (what
-      # actually hits storage under ADR-0017). For enum_int and @[Flags]
-      # the wire form is an integer that wouldn't be human-readable, so we
-      # fall back to the source-level member name.
-      private def enum_picker_lines(col : Adapter::LiveColumn, radio : Bool) : Array(String)
+      # For enum_int the wire form is an integer that wouldn't be
+      # human-readable, so we fall back to the source-level member name.
+      private def flags_picker_lines(col : Adapter::LiveColumn) : Array(String)
         info = @enum_columns[col.name]?
-        return [Term.dim("(no members)")] if info.nil? || info.members.empty?
+        return [::TUI::Term.dim("(no members)")] if info.nil? || info.members.empty?
         use_wire = (@portable_types[col.name]? == "enum_string")
         info.members.map_with_index do |member, index|
           pointer = (index == @enum_focus) ? "▸" : " "
-          marker = if radio
-                     (index == @enum_pending_index) ? "◉" : "○"
-                   else
-                     @flags_pending.includes?(index) ? "[x]" : "[ ]"
-                   end
+          marker = @flags_pending.includes?(index) ? "[x]" : "[ ]"
           label = use_wire ? member.wire_name : member.name
           "#{pointer} #{marker} #{label}"
         end
       end
 
-      private def editor_lines : Array(String)
-        vw = compute_val_w
-        result = [] of String
-        @edit_lines.each_with_index do |text, li|
-          full = if li == @edit_row
-                   left = text[0...@edit_col]
-                   right = text[@edit_col..]? || ""
-                   "#{left}█#{right}"
-                 else
-                   text
-                 end
-          segs = soft_wrap(full, vw)
-          segs.each_with_index do |seg, si|
-            result << (si < segs.size - 1 ? seg + Style.wrap_cont : seg)
-          end
-        end
-        result
+      # ScrollableField renders into a Buffer at an explicit (y, x) over
+      # `height` rows (own cursor, scrollbar, and wrap-marker included),
+      # same scratch-buffer technique as #bool_picker_lines/
+      # #enum_field_lines — height comes from #text_edit_row_count so
+      # this always renders exactly as many rows as field_row_count
+      # reserved for this field.
+      private def text_editor_lines(editor : ::TUI::ScrollableField(::TUI::TextEdit),
+                                    col : Adapter::LiveColumn) : Array(String)
+        height = text_edit_row_count(col, compute_val_w)
+        scratch = ::TUI::Buffer.new(compute_val_w, height)
+        editor.render(scratch, 0, 0, scratch.width, height)
+        height.times.map do |row|
+          String.build do |str|
+            scratch.width.times { |sc| str << scratch.cell(row, sc).char }
+          end.rstrip
+        end.to_a
       end
 
       private def display_lines(col : Adapter::LiveColumn) : Array(String)
         val = @row[col.name]?
-        return [Term.dim("(null)")] if val.nil?
+        return [::TUI::Term.dim("(null)")] if val.nil?
         vw = compute_val_w
         pt = @portable_types[col.name]?
         has_error = @field_errors.has_key?(col.name)
@@ -742,26 +692,37 @@ module Prostore
         return picker_hint if picker_hint
         cur_col = current_col
         cur_fk = cur_col.try { |col| fk_for_col(col.name) }
-        if @editing
-          editor_status_hint(cur_fk)
+        if @text_editor
+          editor_status_hint
+        elsif @input_editor
+          input_status_hint
         else
           nav_status_hint(cur_col, cur_fk)
         end
       end
 
       private def picker_status_hint : String?
-        if @bool_editing
+        if @bool_editor
           " ←→/Space:toggle  Enter/Esc:done"
-        elsif @enum_editing
+        elsif @enum_editor
           " ↑↓:choose  Enter/Space:select  Esc:cancel"
         elsif @flags_editing
           " ↑↓:move  Space:toggle  Enter:done  Esc:cancel"
         end
       end
 
-      private def editor_status_hint(cur_fk : Adapter::LiveForeignKey?) : String
-        tab_part = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
-        " ↑↓←→:cursor  Enter:newline#{tab_part}  Esc:done"
+      # No Tab:browse-fk hint here — #start_edit routes single-column FK
+      # fields straight to the picker (see there), so a TextEdit is never
+      # open on one.
+      private def editor_status_hint : String
+        " ↑↓←→:cursor  Enter:newline  Esc:commit"
+      end
+
+      # InputField commits on both Enter and Esc — no newline gesture,
+      # unlike #editor_status_hint's multi-line TextEdit. Same no-FK
+      # rationale as #editor_status_hint above.
+      private def input_status_hint : String
+        " ←→:cursor  Enter/Esc:commit"
       end
 
       private def nav_status_hint(cur_col : Adapter::LiveColumn?,
@@ -769,12 +730,13 @@ module Prostore
         err = cur_col.try { |col| @field_errors[col.name]? }
         return " ✕ #{err}" if err
         rm_part = (cur_col && cur_col.nullable && !(cur_col.primary && !@is_new)) ? "  r:remove" : ""
-        fk_tab = (cur_fk && cur_fk.columns.size == 1) ? "  Tab:browse-fk" : ""
+        # e:edit already opens the FK picker directly on a single-column FK
+        # (see #start_edit) — no separate Tab:browse-fk hint needed here.
         if @is_new
-          " ↑↓:field  e:edit#{rm_part}#{fk_tab}  s:insert  Esc:back"
+          " ↑↓:field  e:edit#{rm_part}  s:insert  Esc:back"
         else
           fk_follow = cur_fk ? "  f:follow-fk" : ""
-          " ↑↓:field  e:edit#{rm_part}#{fk_follow}#{fk_tab}  s:save  d:delete  Esc:back"
+          " ↑↓:field  e:edit#{rm_part}#{fk_follow}  s:save  d:delete  Esc:back"
         end
       end
 

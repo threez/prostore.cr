@@ -1,4 +1,4 @@
-.PHONY: all clean fmt fmtcheck lint fix docs spec version tag
+.PHONY: all clean fmt fmtcheck lint fix docs spec example-bookstore version tag
 
 all: clean fmt lint docs spec
 
@@ -22,6 +22,16 @@ fix: lib/ameba/bin/ameba
 
 docs:
 	crystal docs
+
+bin/prostore:
+	shards build prostore
+
+# Seed examples/bookstore/bookstore.sqlite3 (fresh every run) and open it in
+# the TUI browser — a self-contained schema exercising every RecordDetail
+# editor kind (bool, enum_string, enum_int, @[Flags], FK, text).
+example-bookstore: bin/prostore
+	crystal run examples/bookstore/seed.cr
+	DATABASE_URL=sqlite3://examples/bookstore/bookstore.sqlite3 bin/prostore browse
 
 clean:
 	rm -rf docs/
