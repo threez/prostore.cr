@@ -96,7 +96,7 @@ module Prostore
           INSERT INTO #{adapter.quote_ident(Bookkeeping::META_TABLE)} (key, value, updated_at)
           VALUES (#{adapter.placeholders(3)})
           ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-        SQL
+          SQL
         executor.exec(sql, "schema_version", version.to_s, Time.utc.to_rfc3339)
       end
 
@@ -216,7 +216,7 @@ module Prostore
           WHERE table_name = #{adapter.placeholder(10)}
             AND kind = #{adapter.placeholder(11)}
             AND tag  = #{adapter.placeholder(12)}
-        SQL
+          SQL
         executor.exec(
           sql,
           args: [
@@ -249,7 +249,7 @@ module Prostore
           WHERE table_name = #{adapter.placeholder(4)}
             AND kind = #{adapter.placeholder(5)}
             AND tag  = #{adapter.placeholder(6)}
-        SQL
+          SQL
         executor.exec(
           sql,
           args: [
@@ -279,7 +279,7 @@ module Prostore
           WHERE table_name = #{adapter.placeholder(6)}
             AND kind = #{adapter.placeholder(7)}
             AND tag  = #{adapter.placeholder(8)}
-        SQL
+          SQL
         executor.exec(
           sql,
           args: [
@@ -296,14 +296,14 @@ module Prostore
       end
 
       private def json_string(value : JSON::Any?) : String?
-        return nil if value.nil?
+        return if value.nil?
         value.as_s?
       end
 
       private def json_bool_int(value : JSON::Any?) : Int32?
-        return nil if value.nil?
+        return if value.nil?
         b = value.as_bool?
-        return nil if b.nil?
+        return if b.nil?
         b ? 1 : 0
       end
 

@@ -27,7 +27,7 @@ module Prostore
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = $1
             ORDER BY ordinal_position
-          SQL
+            SQL
             rows << {
               name:           rs.read(String),
               data_type:      rs.read(String),
@@ -44,7 +44,7 @@ module Prostore
             FROM pg_index i
             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
             WHERE i.indrelid = ($1::regclass) AND i.indisprimary
-          SQL
+            SQL
             pk_set << rs.read(String)
           end
 
@@ -74,7 +74,7 @@ module Prostore
             JOIN pg_class i ON i.oid = ix.indexrelid
             JOIN pg_am am ON am.oid = i.relam
             WHERE t.relname = $1 AND NOT ix.indisprimary
-          SQL
+            SQL
             name = rs.read(String)
             uniq = rs.read(Bool)
             _amname = rs.read(String)
@@ -108,7 +108,7 @@ module Prostore
               ON ccu.constraint_name = tc.constraint_name
             WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = $1
             ORDER BY kcu.ordinal_position
-          SQL
+            SQL
             cname = rs.read(String)
             tname = rs.read(String)
             src_col = rs.read(String)

@@ -16,14 +16,14 @@ require "./prostore"
 require "./prostore/tui/app"
 
 USAGE = <<-USAGE
-Usage:
-  prostore migrate status        Show migration history and outstanding drift
-  prostore migrate abort <id>    Mark an in-progress migration as aborted
-  prostore drift check           Dry-run drift detection
-  prostore backup <destination>  Write a backup to <destination>
-                                 Supports strftime tokens: %Y %m %d %H %M %S
-  prostore browse                Launch interactive TUI database browser
-USAGE
+  Usage:
+    prostore migrate status        Show migration history and outstanding drift
+    prostore migrate abort <id>    Mark an in-progress migration as aborted
+    prostore drift check           Dry-run drift detection
+    prostore backup <destination>  Write a backup to <destination>
+                                   Supports strftime tokens: %Y %m %d %H %M %S
+    prostore browse                Launch interactive TUI database browser
+  USAGE
 
 def die(msg : String) : NoReturn
   STDERR.puts msg

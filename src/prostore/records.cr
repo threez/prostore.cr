@@ -29,7 +29,7 @@ module Prostore
     alias CoerceScalar = ::UUID | ::BigDecimal | ::JSON::Any | ::DB::Any
 
     def coerce_for_write(value : CoerceScalar, portable_type : String) : ::DB::Any
-      return nil if value.nil?
+      return if value.nil?
       case value
       when ::UUID
         value.to_s.as(::DB::Any)
@@ -56,7 +56,7 @@ module Prostore
     # reverse trip lives in the macro-emitted `___assign_from_rs`.
     def coerce_for_write(value : ::Enum?, portable_type : String,
                          naming : ::Symbol = :as_declared) : ::DB::Any
-      return nil if value.nil?
+      return if value.nil?
       case portable_type
       when "enum_int" then value.value.to_i64.as(::DB::Any)
       else                 ::Prostore::Schema::NameConversion.apply(value.to_s, naming).as(::DB::Any)

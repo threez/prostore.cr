@@ -205,7 +205,7 @@ module Prostore
             JOIN pg_index i ON i.indexrelid = c.oid
             WHERE c.relname = #{adapter.placeholder(1)} AND NOT i.indisvalid
           )
-        SQL
+          SQL
 
         if invalid
           executor.exec(

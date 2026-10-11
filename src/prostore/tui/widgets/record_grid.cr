@@ -53,9 +53,9 @@ module Prostore
           fk.columns.each { |col_name| acc[col_name] = fk.references_table }
         end
         @portable_types = @browser.portable_types(table)
-        @searchable_cols = schema.columns.select { |col|
+        @searchable_cols = schema.columns.select do |col|
           ColumnTypes.searchable_text?(@portable_types[col.name]?, col.type_text)
-        }.map(&.name)
+        end.map(&.name)
         reload
       end
 
@@ -68,7 +68,7 @@ module Prostore
       end
 
       private def current_filter : Filter?
-        return nil if @filter_term.empty? || @searchable_cols.empty?
+        return if @filter_term.empty? || @searchable_cols.empty?
         Filter.new(@filter_term, @searchable_cols)
       end
 
@@ -99,10 +99,10 @@ module Prostore
         vis_names = @col_names[from..to_col]
 
         # Header
-        header = build_row_str(vis_names.map { |name|
+        header = build_row_str(vis_names.map do |name|
           ref = @fk_refs[name]?
           ref ? "#{::TUI::Term.bold(name)} #{Style.fk_ref("→#{ref}")}" : ::TUI::Term.bold(name)
-        }, col_widths)
+        end, col_widths)
         buffer.set(0, 0, ::TUI::Term.fit(header, buffer.width))
 
         # Data rows
@@ -272,12 +272,12 @@ module Prostore
       # Returns the PK value of the currently highlighted row, or nil.
       def selected_pk : String?
         t = @table
-        return nil unless t
-        return nil if @rows.empty?
+        return unless t
+        return if @rows.empty?
         pk = @browser.pk_col(t)
-        return nil unless pk
+        return unless pk
         idx = @col_names.index(pk)
-        return nil unless idx
+        return unless idx
         @rows[@cursor][idx]
       end
 

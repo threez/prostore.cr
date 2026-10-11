@@ -41,7 +41,7 @@ private def install_legacy_v1(backend : TestBackend, conn : Prostore::Connection
       definition    TEXT    NOT NULL,
       PRIMARY KEY (table_name, kind, tag)
     )
-  SQL
+    SQL
 
   field_defn = {
     portable_type:  "int64",
@@ -120,18 +120,18 @@ BACKENDS.each do |backend|
         rows = Prostore::Drift::SchemaTable.for_table(conn.adapter, conn.db, "im_user")
         id_row = rows.find! { |row| row.kind == "column" && row.tag == 1 }
         id_row.portable_type.should eq("int64")
-        id_row.primary.should eq(true)
-        id_row.auto_increment.should eq(true)
-        id_row.nullable.should eq(false)
+        id_row.primary.should be_true
+        id_row.auto_increment.should be_true
+        id_row.nullable.should be_false
 
         email_row = rows.find! { |row| row.kind == "column" && row.tag == 2 }
         email_row.portable_type.should eq("string")
-        email_row.primary.should eq(false)
-        email_row.nullable.should eq(false)
+        email_row.primary.should be_false
+        email_row.nullable.should be_false
 
         idx_row = rows.find! { |row| row.kind == "index" && row.tag == 1 }
         idx_row.index_columns.should eq(["email"])
-        idx_row.index_unique.should eq(true)
+        idx_row.index_unique.should be_true
         idx_row.index_where_sql.should be_nil
       end
     end

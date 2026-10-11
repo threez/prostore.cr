@@ -33,7 +33,7 @@ module Prostore
             value       TEXT NOT NULL,
             updated_at  TEXT NOT NULL
           )
-        SQL
+          SQL
       end
 
       private def create_migration_sql(adapter : Prostore::Adapter::Base) : String
@@ -49,7 +49,7 @@ module Prostore
             completed_at    TEXT,
             error           TEXT
           )
-        SQL
+          SQL
       end
 
       private def create_migration_step_sql(adapter : Prostore::Adapter::Base) : String
@@ -65,7 +65,7 @@ module Prostore
             completed_at   TEXT,
             PRIMARY KEY (migration_id, ordinal)
           )
-        SQL
+          SQL
       end
 
       # prostore_schema: one row per managed column/index/foreign_key.
@@ -107,7 +107,7 @@ module Prostore
 
             PRIMARY KEY (table_name, kind, tag)
           )
-        SQL
+          SQL
       end
     end
   end

@@ -62,7 +62,7 @@ module Prostore
         # can drop and re-add it by name at migration time.
         def render_enum_check(field : Schema::Field, table : String? = nil) : String?
           members = field.enum_members
-          return nil if members.nil? || members.empty?
+          return if members.nil? || members.empty?
           col = quote_ident(field.name.to_s)
           body =
             if field.enum_is_flags

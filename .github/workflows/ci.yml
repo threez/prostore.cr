@@ -17,7 +17,7 @@ jobs:
 
       - uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.20.1
+          crystal: 1.20.2
 
       - name: Cache shards
         uses: actions/cache@v4
@@ -34,6 +34,12 @@ jobs:
       - name: Compile check
         run: crystal build src/prostore.cr -o /tmp/prostore_check --no-codegen
 
+      - name: Build ameba
+        run: cd lib/ameba && shards build ameba
+
+      - name: Lint
+        run: lib/ameba/bin/ameba
+
   # ---------------------------------------------------------------------------
   # SQLite test job. Runs unit specs, SQLite-only integration specs, and
   # the shared integration suite against in-memory SQLite. No service
@@ -48,7 +54,7 @@ jobs:
 
       - uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.20.1
+          crystal: 1.20.2
 
       - name: Cache shards
         uses: actions/cache@v4
@@ -97,7 +103,7 @@ jobs:
 
       - uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.20.1
+          crystal: 1.20.2
 
       - name: Cache shards
         uses: actions/cache@v4
