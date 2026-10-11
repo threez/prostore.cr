@@ -157,7 +157,7 @@ module Prostore
         enum_members =
           j["enum_members"]?.try do |raw|
             arr = raw.as_a?
-            next nil if arr.nil?
+            next if arr.nil?
             arr.map do |entry|
               member_name = entry["name"].as_s
               Schema::EnumMember.new(

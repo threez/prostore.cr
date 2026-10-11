@@ -203,7 +203,7 @@ module Prostore
       end
 
       private def parse_time(s : String?) : Time?
-        return nil unless s
+        return unless s
         Time.parse_rfc3339(s)
       end
     end

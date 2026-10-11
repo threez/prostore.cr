@@ -62,7 +62,7 @@ BACKENDS.each do |backend|
       template = "/tmp/prostore_ts_dst_#{pid}_%Y%m%d_%H%M%S.#{ext}"
 
       conn = Prostore::Connection.open(src_url)
-      actual = ""
+      actual = "" # ameba:disable Lint/UselessAssign -- default used by the ensure block if Backup.run raises
       begin
         backend.reset_state(conn)
         Prostore.migrate(conn, [SBackupModel] of Prostore::Model.class)

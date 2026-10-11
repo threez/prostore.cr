@@ -190,7 +190,7 @@ module Prostore
 
       private def read_string_array(rs : DB::ResultSet) : Array(String)?
         raw = rs.read(String?)
-        return nil if raw.nil?
+        return if raw.nil?
         Array(String).from_json(raw)
       end
 
@@ -205,16 +205,16 @@ module Prostore
       # annotation pushed wire_name away from name.
       private def read_enum_members(rs : DB::ResultSet) : Array(Schema::EnumMember)?
         raw = rs.read(String?)
-        return nil if raw.nil?
+        return if raw.nil?
         parsed = JSON.parse(raw)
         arr = parsed.as_a?
-        return nil if arr.nil?
+        return if arr.nil?
         arr.compact_map do |entry|
           pair = entry.as_a?
-          next nil if pair.nil? || pair.size < 2 || pair.size > 3
+          next if pair.nil? || pair.size < 2 || pair.size > 3
           name = pair[0].as_s?
           val = pair[1].as_i64?
-          next nil if name.nil? || val.nil?
+          next if name.nil? || val.nil?
           wire = pair.size == 3 ? (pair[2].as_s? || name) : name
           Schema::EnumMember.new(name: name, value: val, wire_name: wire)
         end
@@ -233,7 +233,7 @@ module Prostore
           VALUES (#{placeholders})
           ON CONFLICT (table_name, kind, tag) DO UPDATE SET
             #{assignments}
-        SQL
+          SQL
 
         executor.exec(sql, args: row_values(row))
       end
@@ -267,17 +267,17 @@ module Prostore
       end
 
       private def bool_to_db(value : Bool?) : ::DB::Any
-        return nil if value.nil?
+        return if value.nil?
         (value ? 1 : 0).as(::DB::Any)
       end
 
       private def encode_string_array(value : Array(String)?) : ::DB::Any
-        return nil if value.nil?
+        return if value.nil?
         value.to_json.as(::DB::Any)
       end
 
       private def encode_enum_members(value : Array(Schema::EnumMember)?) : ::DB::Any
-        return nil if value.nil?
+        return if value.nil?
         JSON.build do |json|
           json.array do
             value.each do |member|

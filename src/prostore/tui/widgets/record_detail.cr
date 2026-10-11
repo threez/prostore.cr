@@ -315,11 +315,11 @@ module Prostore
             @flags_editing = true
           else
             use_wire = (@portable_types[col.name]? == "enum_string")
-            options = info.members.map { |member|
+            options = info.members.map do |member|
               ::TUI::FormEnumOption.new(
                 label: use_wire ? member.wire_name : member.name,
                 wire_value: enum_wire_value(member, @portable_types[col.name]?))
-            }
+            end
             editor = ::TUI::EnumField.new(options)
             editor.start(@row[col.name]? || "")
             @enum_editor = editor
@@ -593,11 +593,11 @@ module Prostore
         height = info.members.size
         scratch = ::TUI::Buffer.new(compute_val_w, height)
         editor.render(scratch, 0, 0, scratch.width, height)
-        height.times.map do |row|
+        Array.new(height) do |row|
           String.build do |str|
             scratch.width.times { |sc| str << scratch.cell(row, sc).char }
           end.rstrip
-        end.to_a
+        end
       end
 
       # Render the vertical checkbox picker for @[Flags] enums — kept
@@ -630,11 +630,11 @@ module Prostore
         height = text_edit_row_count(col, compute_val_w)
         scratch = ::TUI::Buffer.new(compute_val_w, height)
         editor.render(scratch, 0, 0, scratch.width, height)
-        height.times.map do |row|
+        Array.new(height) do |row|
           String.build do |str|
             scratch.width.times { |sc| str << scratch.cell(row, sc).char }
           end.rstrip
-        end.to_a
+        end
       end
 
       private def display_lines(col : Adapter::LiveColumn) : Array(String)
@@ -670,7 +670,7 @@ module Prostore
           mask = val.to_i64?
           return val if mask.nil?
           names = info.members.compact_map do |member|
-            next nil if member.value == 0
+            next if member.value == 0
             ((mask & member.value) == member.value) ? member.name : nil
           end
           names.empty? ? val : names.join(" | ")
